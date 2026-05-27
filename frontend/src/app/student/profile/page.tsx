@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, clearTokens } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
@@ -45,15 +45,17 @@ export default function StudentProfilePage() {
     queryFn: async () => (await api.get("/groups/joined")).data,
   });
 
-  // Fetch full user to get profile subjects on mount
-  useQuery<UserFull>({
+  const { data: meFull } = useQuery<UserFull>({
     queryKey: ["me-full"],
     queryFn: async () => (await api.get("/users/me")).data,
-    onSuccess: (data) => {
-      setSub1(data.profile_subject1 ?? "");
-      setSub2(data.profile_subject2 ?? "");
-    },
   });
+
+  useEffect(() => {
+    if (meFull) {
+      setSub1(meFull.profile_subject1 ?? "");
+      setSub2(meFull.profile_subject2 ?? "");
+    }
+  }, [meFull]);
 
   const updateProfile = useMutation({
     mutationFn: () => api.patch("/users/me", {
