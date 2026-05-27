@@ -28,6 +28,11 @@ func NewRouter(pool *pgxpool.Pool, cfg *config.Config, n notify.Sender) *gin.Eng
 
 	v1 := r.Group("/api/v1")
 
+	// Health check (public, no auth)
+	v1.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "ok"})
+	})
+
 	// Публичные маршруты
 	a := v1.Group("/auth")
 	{
