@@ -2,6 +2,6 @@
 builder = "RAILPACK"
 
 [deploy]
-healthcheckPath = "/api/v1/health"
+healthcheckPath = "/api/v1/topics"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"
