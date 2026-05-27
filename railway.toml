@@ -1,0 +1,7 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+healthcheckPath = "/api/v1/topics"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"

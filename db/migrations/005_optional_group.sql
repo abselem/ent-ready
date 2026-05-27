@@ -1,0 +1,1 @@
+ALTER TABLE tests ALTER COLUMN group_id DROP NOT NULL;

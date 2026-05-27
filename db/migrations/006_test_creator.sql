@@ -1,0 +1,1 @@
+ALTER TABLE tests ADD COLUMN IF NOT EXISTS created_by INT REFERENCES users(id);

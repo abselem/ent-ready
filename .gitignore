@@ -1,0 +1,27 @@
+# Environment
+.env
+
+# Go binaries
+*.exe
+*.exe~
+server
+
+# Logs
+*.log
+*.err
+
+# Temp SQL files
+add_topic.sql
+check*.sql
+ins_rl.sql
+seed_topics.sql
+fix_topics.sql
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+
+# OS
+.DS_Store
+Thumbs.db
