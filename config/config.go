@@ -10,11 +10,13 @@ import (
 )
 
 type Config struct {
-	DB               DBConfig
-	JWT              JWTConfig
-	ServerAddr       string
-	TelegramBotToken string
-	CORSOrigins      []string
+	DB                  DBConfig
+	JWT                 JWTConfig
+	ServerAddr          string
+	TelegramBotToken    string
+	TelegramBotUsername string
+	TelegramWebhookURL  string
+	CORSOrigins         []string
 }
 
 type DBConfig struct {
@@ -69,9 +71,11 @@ func Load() (*Config, error) {
 			AccessTTL:     15 * time.Minute,
 			RefreshTTL:    7 * 24 * time.Hour,
 		},
-		ServerAddr:       serverAddr,
-		TelegramBotToken: getEnv("TELEGRAM_BOT_TOKEN", ""),
-		CORSOrigins:      splitComma(corsOrigins),
+		ServerAddr:          serverAddr,
+		TelegramBotToken:    getEnv("TELEGRAM_BOT_TOKEN", ""),
+		TelegramBotUsername: getEnv("TELEGRAM_BOT_USERNAME", ""),
+		TelegramWebhookURL:  getEnv("TELEGRAM_WEBHOOK_URL", ""),
+		CORSOrigins:         splitComma(corsOrigins),
 	}, nil
 }
 

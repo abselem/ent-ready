@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -11,6 +11,11 @@ import { Input } from "@/components/ui/input";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 
 type Step = "phone" | "code" | "details";
+
+function encodeTelegramPayload(phone: string, purpose: string): string {
+  const raw = `${phone}:${purpose}`;
+  return btoa(raw).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -25,6 +30,13 @@ export default function RegisterPage() {
   const [roleId, setRoleId] = useState<2 | 1>(2); // 2=студент, 1=учитель
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [botUsername, setBotUsername] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.get("/auth/telegram-bot")
+      .then((r) => setBotUsername(r.data.bot_username || null))
+      .catch(() => null);
+  }, []);
 
   async function handleSendOTP() {
     setError("");
@@ -134,20 +146,43 @@ export default function RegisterPage() {
               onChange={(e) => setPhone(e.target.value)}
             />
             {error && <p className="text-sm text-destructive">{error}</p>}
-            <Button size="lg" loading={loading} onClick={handleSendOTP} className="w-full">
-              Отправить код
-            </Button>
+            {botUsername ? (
+              <a
+                href={`https://t.me/${botUsername}?start=${encodeTelegramPayload(phone, "register")}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`w-full ${!phone.trim() ? "pointer-events-none opacity-50" : ""}`}
+              >
+                <Button size="lg" className="w-full" disabled={!phone.trim()} type="button">
+                  Получить код в Telegram
+                </Button>
+              </a>
+            ) : (
+              <Button size="lg" loading={loading} onClick={handleSendOTP} className="w-full" disabled={!phone.trim()}>
+                Отправить код
+              </Button>
+            )}
+            {botUsername && phone.trim() && (
+              <p className="text-xs text-muted-foreground text-center">
+                Нажмите кнопку → откроется Telegram бот → он пришлёт код
+              </p>
+            )}
+            {botUsername && (
+              <Button variant="ghost" size="sm" onClick={() => { setStep("code"); setError(""); }}>
+                Уже получил код →
+              </Button>
+            )}
           </div>
         )}
 
         {step === "code" && (
           <div className="flex flex-col gap-4">
             <p className="text-sm text-muted-foreground">
-              Код отправлен на {phone}
+              {botUsername ? `Введите код, который прислал Telegram бот на номер ${phone}` : `Код отправлен на ${phone}`}
             </p>
             <Input
               id="code"
-              label="Код из SMS"
+              label="Код из Telegram"
               type="text"
               inputMode="numeric"
               placeholder="123456"
@@ -164,7 +199,7 @@ export default function RegisterPage() {
               size="sm"
               onClick={() => { setStep("phone"); setError(""); }}
             >
-              Изменить номер
+              ← Назад
             </Button>
           </div>
         )}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -23,6 +23,17 @@ export default function LoginPage() {
   const [otpSent, setOtpSent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [botUsername, setBotUsername] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.get("/auth/telegram-bot")
+      .then((r) => setBotUsername(r.data.bot_username || null))
+      .catch(() => null);
+  }, []);
+
+  function encodeTelegramPayload(p: string, purpose: string): string {
+    return btoa(`${p}:${purpose}`).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+  }
 
   async function handleSendOTP() {
     setError("");
@@ -122,13 +133,31 @@ export default function LoginPage() {
           {mode === "otp" && (
             <>
               {!otpSent ? (
-                <Button type="button" variant="outline" loading={loading} onClick={handleSendOTP}>
-                  Отправить код
-                </Button>
+                botUsername ? (
+                  <div className="flex flex-col gap-2">
+                    <a
+                      href={`https://t.me/${botUsername}?start=${encodeTelegramPayload(phone, "login")}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={!phone.trim() ? "pointer-events-none opacity-50" : ""}
+                    >
+                      <Button type="button" variant="outline" className="w-full" disabled={!phone.trim()}>
+                        Получить код в Telegram
+                      </Button>
+                    </a>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setOtpSent(true)}>
+                      Уже получил код →
+                    </Button>
+                  </div>
+                ) : (
+                  <Button type="button" variant="outline" loading={loading} onClick={handleSendOTP}>
+                    Отправить код
+                  </Button>
+                )
               ) : (
                 <Input
                   id="code"
-                  label="Код из SMS"
+                  label="Код из Telegram"
                   type="text"
                   inputMode="numeric"
                   placeholder="123456"

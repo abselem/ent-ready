@@ -25,8 +25,12 @@ func NewRouter(pool *pgxpool.Pool, cfg *config.Config, n notify.Sender) *gin.Eng
 	lessons := NewLessonHandler(pool, cfg)
 	tests := NewTestHandler(pool, cfg)
 	ent := NewENTHandler(pool, cfg)
+	tg := NewTelegramHandler(pool, cfg, n)
 
 	v1 := r.Group("/api/v1")
+
+	// Telegram bot webhook (public, called by Telegram servers)
+	r.POST("/telegram/webhook", tg.Webhook)
 
 	// Health check (public, no auth)
 	v1.GET("/health", func(c *gin.Context) {
@@ -42,6 +46,7 @@ func NewRouter(pool *pgxpool.Pool, cfg *config.Config, n notify.Sender) *gin.Eng
 		a.POST("/login/otp", auth.LoginOTP)
 		a.POST("/refresh", auth.Refresh)
 		a.POST("/reset-password", auth.ResetPassword)
+		a.GET("/telegram-bot", tg.BotConfig)
 	}
 
 	// Защищённые маршруты

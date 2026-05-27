@@ -103,6 +103,15 @@ func main() {
 		sender = notify.LogSender{}
 	}
 
+	if cfg.TelegramBotToken != "" && cfg.TelegramWebhookURL != "" {
+		webhookURL := cfg.TelegramWebhookURL + "/telegram/webhook"
+		if err := handler.RegisterWebhook(cfg.TelegramBotToken, webhookURL); err != nil {
+			log.Printf("telegram webhook registration failed: %v", err)
+		} else {
+			log.Printf("telegram webhook registered: %s", webhookURL)
+		}
+	}
+
 	r := handler.NewRouter(pool, cfg, sender)
 	log.Printf("server starting on %s", cfg.ServerAddr)
 	if err := r.Run(cfg.ServerAddr); err != nil {

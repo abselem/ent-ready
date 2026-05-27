@@ -124,6 +124,13 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		}
 	}
 
+	// If user came via Telegram bot, save their chat_id
+	if v, ok := pendingChats.LoadAndDelete(req.Phone); ok {
+		chatID := v.(int64)
+		_, _ = h.pool.Exec(context.Background(),
+			"UPDATE users SET telegram_chat_id=$1 WHERE id=$2", chatID, user.ID)
+	}
+
 	tokens, _, err := h.issueTokens(c, user.ID, h.roleCode(context.Background(), user.RoleID))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
