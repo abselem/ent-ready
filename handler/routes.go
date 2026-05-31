@@ -46,7 +46,7 @@ func NewRouter(pool *pgxpool.Pool, cfg *config.Config, n notify.Sender) *gin.Eng
 		a.POST("/login/otp", auth.LoginOTP)
 		a.POST("/refresh", auth.Refresh)
 		a.POST("/reset-password", auth.ResetPassword)
-		a.GET("/telegram-bot", tg.BotConfig)
+		a.GET("/config", tg.AuthConfig)
 	}
 
 	// Защищённые маршруты

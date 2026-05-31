@@ -80,26 +80,26 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	otp, err := h.q.GetActiveOTPCode(context.Background(), db.GetActiveOTPCodeParams{
-		Phone:   req.Phone,
-		Purpose: "register",
-	})
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or expired code"})
-		return
+	if h.cfg.OTPEnabled {
+		otp, err := h.q.GetActiveOTPCode(context.Background(), db.GetActiveOTPCodeParams{
+			Phone:   req.Phone,
+			Purpose: "register",
+		})
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or expired code"})
+			return
+		}
+		if otp.Attempts >= 3 {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many attempts"})
+			return
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(otp.Code), []byte(req.Code)); err != nil {
+			_ = h.q.IncrementOTPAttempts(context.Background(), otp.ID)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid code"})
+			return
+		}
+		_ = h.q.MarkOTPUsed(context.Background(), otp.ID)
 	}
-
-	if otp.Attempts >= 3 {
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many attempts"})
-		return
-	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(otp.Code), []byte(req.Code)); err != nil {
-		_ = h.q.IncrementOTPAttempts(context.Background(), otp.ID)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid code"})
-		return
-	}
-	_ = h.q.MarkOTPUsed(context.Background(), otp.ID)
 
 	user, err := h.q.CreateUser(context.Background(), db.CreateUserParams{
 		Phone:      req.Phone,

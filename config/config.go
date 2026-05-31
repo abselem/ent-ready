@@ -17,6 +17,7 @@ type Config struct {
 	TelegramBotUsername string
 	TelegramWebhookURL  string
 	CORSOrigins         []string
+	OTPEnabled          bool
 }
 
 type DBConfig struct {
@@ -76,6 +77,7 @@ func Load() (*Config, error) {
 		TelegramBotUsername: getEnv("TELEGRAM_BOT_USERNAME", ""),
 		TelegramWebhookURL:  getEnv("TELEGRAM_WEBHOOK_URL", ""),
 		CORSOrigins:         splitComma(corsOrigins),
+		OTPEnabled:          os.Getenv("OTP_ENABLED") == "true",
 	}, nil
 }
 

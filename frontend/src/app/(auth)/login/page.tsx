@@ -23,11 +23,12 @@ export default function LoginPage() {
   const [otpSent, setOtpSent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [botUsername, setBotUsername] = useState<string | null>(null);
+  const [otpEnabled, setOtpEnabled] = useState(false);
+  const [botUsername, setBotUsername] = useState("");
 
   useEffect(() => {
-    api.get("/auth/telegram-bot")
-      .then((r) => setBotUsername(r.data.bot_username || null))
+    api.get("/auth/config")
+      .then((r) => { setOtpEnabled(r.data.otp_enabled); setBotUsername(r.data.bot_username ?? ""); })
       .catch(() => null);
   }, []);
 
@@ -91,21 +92,19 @@ export default function LoginPage() {
           </CardContent>
         </CardHeader>
 
-        {/* Переключатель режима */}
-        <div className="flex rounded-lg border border-border overflow-hidden mb-6">
-          <button
-            onClick={() => setMode("password")}
-            className={`flex-1 py-2 text-sm font-medium transition-colors ${mode === "password" ? "bg-primary text-primary-foreground" : "bg-card hover:bg-muted"}`}
-          >
-            Пароль
-          </button>
-          <button
-            onClick={() => setMode("otp")}
-            className={`flex-1 py-2 text-sm font-medium transition-colors ${mode === "otp" ? "bg-primary text-primary-foreground" : "bg-card hover:bg-muted"}`}
-          >
-            SMS-код
-          </button>
-        </div>
+        {/* Переключатель режима — только если OTP включён */}
+        {otpEnabled && (
+          <div className="flex rounded-lg border border-border overflow-hidden mb-6">
+            <button onClick={() => setMode("password")}
+              className={`flex-1 py-2 text-sm font-medium transition-colors ${mode === "password" ? "bg-primary text-primary-foreground" : "bg-card hover:bg-muted"}`}>
+              Пароль
+            </button>
+            <button onClick={() => setMode("otp")}
+              className={`flex-1 py-2 text-sm font-medium transition-colors ${mode === "otp" ? "bg-primary text-primary-foreground" : "bg-card hover:bg-muted"}`}>
+              Telegram-код
+            </button>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <Input

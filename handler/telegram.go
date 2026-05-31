@@ -126,9 +126,12 @@ func (h *TelegramHandler) Webhook(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-// BotConfig returns the bot username so the frontend can build the deep link.
-func (h *TelegramHandler) BotConfig(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"bot_username": h.cfg.TelegramBotUsername})
+// AuthConfig returns feature flags for the frontend.
+func (h *TelegramHandler) AuthConfig(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"otp_enabled":  h.cfg.OTPEnabled,
+		"bot_username": h.cfg.TelegramBotUsername,
+	})
 }
 
 func (h *TelegramHandler) sendMessage(chatID int64, text string) {
