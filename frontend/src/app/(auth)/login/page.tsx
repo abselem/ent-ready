@@ -8,6 +8,7 @@ import { api, saveTokens } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PhoneInput } from "@/components/ui/phone-input";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 
 type Mode = "password" | "otp";
@@ -17,7 +18,7 @@ export default function LoginPage() {
   const { setTokens, setUser } = useAuthStore();
 
   const [mode, setMode] = useState<Mode>("password");
-  const [phone, setPhone] = useState("");
+  const [phone, setPhone] = useState("+7 ");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [otpSent, setOtpSent] = useState(false);
@@ -36,11 +37,13 @@ export default function LoginPage() {
     return btoa(`${p}:${purpose}`).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
   }
 
+  const rawPhone = phone.replace(/\s/g, "");
+
   async function handleSendOTP() {
     setError("");
     setLoading(true);
     try {
-      await api.post("/auth/send-otp", { phone, purpose: "login" });
+      await api.post("/auth/send-otp", { phone: rawPhone, purpose: "login" });
       setOtpSent(true);
     } catch {
       setError("Не удалось отправить код. Проверьте номер телефона.");
@@ -55,8 +58,8 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const { data } = mode === "password"
-        ? await api.post("/auth/login", { phone, password })
-        : await api.post("/auth/login/otp", { phone, code });
+        ? await api.post("/auth/login", { phone: rawPhone, password })
+        : await api.post("/auth/login/otp", { phone: rawPhone, code });
 
       saveTokens(data.access_token, data.refresh_token);
       setTokens(data.access_token, data.refresh_token);
@@ -80,7 +83,7 @@ export default function LoginPage() {
             <Image src="/logo.png" alt="ENT Ready" width={40} height={40} className="rounded-xl" />
             <div>
               <p className="font-bold text-xl leading-tight">
-                <span style={{ color: "#1B2A5C" }}>ENT </span>
+                <span style={{ color: "#ffffff" }}>ENT </span>
                 <span style={{ color: "#26C0BD" }}>Ready</span>
               </p>
               <p className="text-xs text-muted-foreground">Платформа для подготовки к ЕНТ</p>
@@ -107,15 +110,7 @@ export default function LoginPage() {
         )}
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <Input
-            id="phone"
-            label="Телефон"
-            type="tel"
-            placeholder="+79991234567"
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            required
-          />
+          <PhoneInput id="phone" label="Телефон" value={phone} onChange={setPhone} />
 
           {mode === "password" && (
             <Input

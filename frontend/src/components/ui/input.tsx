@@ -19,8 +19,8 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
           id={id}
           ref={ref}
           className={cn(
-            "h-10 w-full rounded-[--radius] border border-border bg-card px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50",
-            error && "border-destructive focus:ring-destructive",
+            "h-11 w-full rounded-xl border-2 border-white/20 bg-card px-4 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary transition-colors duration-150 disabled:opacity-50",
+            error && "border-destructive focus:border-destructive",
             className
           )}
           {...props}

@@ -8,6 +8,7 @@ import { api, saveTokens } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PhoneInput } from "@/components/ui/phone-input";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 
 type Step = "phone" | "code" | "details";
@@ -27,7 +28,7 @@ export default function RegisterPage() {
 
   const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
   const [step, setStep] = useState<Step>("phone");
-  const [phone, setPhone] = useState("");
+  const [phone, setPhone] = useState("+7 ");
   const [code, setCode] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -42,11 +43,13 @@ export default function RegisterPage() {
       .catch(() => setAuthConfig({ otp_enabled: false, bot_username: "" }));
   }, []);
 
+  const rawPhone = phone.replace(/\s/g, "");
+
   async function handleSendOTP() {
     setError("");
     setLoading(true);
     try {
-      await api.post("/auth/send-otp", { phone, purpose: "register" });
+      await api.post("/auth/send-otp", { phone: rawPhone, purpose: "register" });
       setStep("code");
     } catch {
       setError("Не удалось отправить код. Проверьте номер телефона.");
@@ -67,7 +70,7 @@ export default function RegisterPage() {
     setLoading(true);
     try {
       const { data } = await api.post("/auth/register", {
-        phone,
+        phone: rawPhone,
         code,
         first_name: firstName,
         last_name: lastName,
@@ -105,7 +108,7 @@ export default function RegisterPage() {
               <Image src="/logo.png" alt="ENT Ready" width={40} height={40} className="rounded-xl" />
               <div>
                 <p className="font-bold text-xl leading-tight">
-                  <span style={{ color: "#1B2A5C" }}>ENT </span>
+                  <span style={{ color: "#ffffff" }}>ENT </span>
                   <span style={{ color: "#26C0BD" }}>Ready</span>
                 </p>
                 <p className="text-xs text-muted-foreground">Платформа для подготовки к ЕНТ</p>
@@ -125,11 +128,10 @@ export default function RegisterPage() {
                 Учитель
               </button>
             </div>
-            <Input id="phone" label="Телефон" type="tel" placeholder="+77771234567"
-              value={phone} onChange={(e) => setPhone(e.target.value)} required />
-            <Input id="firstName" label="Имя" placeholder="Иван"
+            <PhoneInput id="phone" label="Телефон" value={phone} onChange={setPhone} />
+            <Input id="firstName" label="Имя" placeholder="Азамат"
               value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
-            <Input id="lastName" label="Фамилия" placeholder="Иванов"
+            <Input id="lastName" label="Фамилия" placeholder="Азаматов"
               value={lastName} onChange={(e) => setLastName(e.target.value)} required />
             <Input id="password" label="Пароль" type="password" placeholder="••••••••"
               value={password} onChange={(e) => setPassword(e.target.value)} required />
@@ -181,8 +183,7 @@ export default function RegisterPage() {
 
         {step === "phone" && (
           <div className="flex flex-col gap-4">
-            <Input id="phone" label="Телефон" type="tel" placeholder="+77771234567"
-              value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <PhoneInput id="phone" label="Телефон" value={phone} onChange={setPhone} />
             {error && <p className="text-sm text-destructive">{error}</p>}
             {botUsername ? (
               <>
@@ -239,9 +240,9 @@ export default function RegisterPage() {
                 </button>
               </div>
             </div>
-            <Input id="firstName" label="Имя" placeholder="Иван"
+            <Input id="firstName" label="Имя" placeholder="Азамат"
               value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
-            <Input id="lastName" label="Фамилия" placeholder="Иванов"
+            <Input id="lastName" label="Фамилия" placeholder="Азаматов"
               value={lastName} onChange={(e) => setLastName(e.target.value)} required />
             <Input id="password" label="Пароль" type="password" placeholder="••••••••"
               value={password} onChange={(e) => setPassword(e.target.value)} required />

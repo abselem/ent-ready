@@ -64,7 +64,7 @@ func (h *AuthHandler) SendOTP(c *gin.Context) {
 // POST /api/v1/auth/register
 type registerReq struct {
 	Phone      string `json:"phone" binding:"required"`
-	Code       string `json:"code" binding:"required"`
+	Code       string `json:"code"`
 	FirstName  string `json:"first_name" binding:"required"`
 	LastName   string `json:"last_name" binding:"required"`
 	MiddleName string `json:"middle_name"`
