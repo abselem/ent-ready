@@ -159,7 +159,7 @@ export default function RegisterPage() {
             <Image src="/logo.png" alt="ENT Ready" width={40} height={40} className="rounded-xl" />
             <div>
               <p className="font-bold text-xl leading-tight">
-                <span style={{ color: "#1B2A5C" }}>ENT </span>
+                <span style={{ color: "#ffffff" }}>ENT </span>
                 <span style={{ color: "#26C0BD" }}>Ready</span>
               </p>
               <p className="text-xs text-muted-foreground">Платформа для подготовки к ЕНТ</p>

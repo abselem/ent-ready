@@ -45,7 +45,7 @@ export function Nav({ items }: NavProps) {
             <Logo />
             <div className="min-w-0">
               <p className="font-bold text-base leading-tight whitespace-nowrap">
-                <span style={{ color: "#1B2A5C" }}>ENT </span>
+                <span style={{ color: "#ffffff" }}>ENT </span>
                 <span style={{ color: "#26C0BD" }}>Ready</span>
               </p>
               {user && (
