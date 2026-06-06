@@ -14,6 +14,7 @@ interface User {
   role?: Role;
   profile_subject1?: number | null;
   profile_subject2?: number | null;
+  avatar_url?: { String: string; Valid: boolean } | null;
 }
 
 interface AuthState {

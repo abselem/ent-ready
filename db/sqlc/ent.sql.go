@@ -31,7 +31,7 @@ const createENTAttempt = `-- name: CreateENTAttempt :one
 
 INSERT INTO ent_attempts (user_id, subject3_id, subject4_id)
 VALUES ($1, $2, $3)
-RETURNING id, user_id, subject3_id, subject4_id, started_at, finished_at, score1, score2, score3, score4
+RETURNING id, user_id, subject3_id, subject4_id, started_at, finished_at, score1, score2, score3, score4, score5
 `
 
 type CreateENTAttemptParams struct {
@@ -55,15 +55,16 @@ func (q *Queries) CreateENTAttempt(ctx context.Context, arg CreateENTAttemptPara
 		&i.Score2,
 		&i.Score3,
 		&i.Score4,
+		&i.Score5,
 	)
 	return i, err
 }
 
 const finishENTAttempt = `-- name: FinishENTAttempt :one
 UPDATE ent_attempts
-SET finished_at = NOW(), score1 = $2, score2 = $3, score3 = $4, score4 = $5
+SET finished_at = NOW(), score1 = $2, score2 = $3, score3 = $4, score4 = $5, score5 = $6
 WHERE id = $1
-RETURNING id, user_id, subject3_id, subject4_id, started_at, finished_at, score1, score2, score3, score4
+RETURNING id, user_id, subject3_id, subject4_id, started_at, finished_at, score1, score2, score3, score4, score5
 `
 
 type FinishENTAttemptParams struct {
@@ -72,6 +73,7 @@ type FinishENTAttemptParams struct {
 	Score2 pgtype.Int2 `json:"score2"`
 	Score3 pgtype.Int2 `json:"score3"`
 	Score4 pgtype.Int2 `json:"score4"`
+	Score5 pgtype.Int2 `json:"score5"`
 }
 
 func (q *Queries) FinishENTAttempt(ctx context.Context, arg FinishENTAttemptParams) (EntAttempt, error) {
@@ -81,6 +83,7 @@ func (q *Queries) FinishENTAttempt(ctx context.Context, arg FinishENTAttemptPara
 		arg.Score2,
 		arg.Score3,
 		arg.Score4,
+		arg.Score5,
 	)
 	var i EntAttempt
 	err := row.Scan(
@@ -94,12 +97,13 @@ func (q *Queries) FinishENTAttempt(ctx context.Context, arg FinishENTAttemptPara
 		&i.Score2,
 		&i.Score3,
 		&i.Score4,
+		&i.Score5,
 	)
 	return i, err
 }
 
 const getENTAttemptByID = `-- name: GetENTAttemptByID :one
-SELECT id, user_id, subject3_id, subject4_id, started_at, finished_at, score1, score2, score3, score4 FROM ent_attempts WHERE id = $1
+SELECT id, user_id, subject3_id, subject4_id, started_at, finished_at, score1, score2, score3, score4, score5 FROM ent_attempts WHERE id = $1
 `
 
 func (q *Queries) GetENTAttemptByID(ctx context.Context, id int32) (EntAttempt, error) {
@@ -116,6 +120,7 @@ func (q *Queries) GetENTAttemptByID(ctx context.Context, id int32) (EntAttempt, 
 		&i.Score2,
 		&i.Score3,
 		&i.Score4,
+		&i.Score5,
 	)
 	return i, err
 }
@@ -174,7 +179,7 @@ func (q *Queries) GetENTSelectedOptions(ctx context.Context, attemptID int32) ([
 }
 
 const getMyENTAttempts = `-- name: GetMyENTAttempts :many
-SELECT id, user_id, subject3_id, subject4_id, started_at, finished_at, score1, score2, score3, score4 FROM ent_attempts WHERE user_id = $1 ORDER BY started_at DESC
+SELECT id, user_id, subject3_id, subject4_id, started_at, finished_at, score1, score2, score3, score4, score5 FROM ent_attempts WHERE user_id = $1 ORDER BY started_at DESC
 `
 
 func (q *Queries) GetMyENTAttempts(ctx context.Context, userID int32) ([]EntAttempt, error) {
@@ -197,6 +202,7 @@ func (q *Queries) GetMyENTAttempts(ctx context.Context, userID int32) ([]EntAtte
 			&i.Score2,
 			&i.Score3,
 			&i.Score4,
+			&i.Score5,
 		); err != nil {
 			return nil, err
 		}

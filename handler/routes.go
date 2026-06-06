@@ -12,6 +12,7 @@ import (
 
 func NewRouter(pool *pgxpool.Pool, cfg *config.Config, n notify.Sender) *gin.Engine {
 	r := gin.Default()
+	r.Static("/static", "./static")
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     cfg.CORSOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
@@ -21,11 +22,13 @@ func NewRouter(pool *pgxpool.Pool, cfg *config.Config, n notify.Sender) *gin.Eng
 
 	auth := NewAuthHandler(pool, cfg, n)
 	users := NewUserHandler(pool, cfg)
+	activity := NewActivityHandler(pool)
 	groups := NewGroupHandler(pool, cfg)
 	lessons := NewLessonHandler(pool, cfg)
 	tests := NewTestHandler(pool, cfg)
 	ent := NewENTHandler(pool, cfg)
 	tg := NewTelegramHandler(pool, cfg, n)
+	topicH := NewTopicHandler(pool)
 
 	v1 := r.Group("/api/v1")
 
@@ -60,6 +63,8 @@ func NewRouter(pool *pgxpool.Pool, cfg *config.Config, n notify.Sender) *gin.Eng
 		secure.PATCH("/users/me", users.UpdateMe)
 		secure.PUT("/users/me/password", users.SetPassword)
 		secure.POST("/users/me/password", users.SetPassword)
+		secure.POST("/users/me/avatar", users.UploadAvatar)
+		secure.GET("/users/me/activity", activity.GetActivity)
 
 		// Группы (только учитель — создание и управление студентами)
 		teacher := secure.Group("/", middleware.RequireRole("teacher"))
@@ -79,6 +84,12 @@ func NewRouter(pool *pgxpool.Pool, cfg *config.Config, n notify.Sender) *gin.Eng
 		secure.GET("/groups/:id/students", groups.ListStudents)
 		secure.GET("/groups/:id/lessons", lessons.List)
 		secure.GET("/lessons/:id", lessons.Get)
+		secure.POST("/upload/image", UploadImage)
+		secure.GET("/lessons/:id/blocks", lessons.ListBlocks)
+		teacher.POST("/lessons/:id/blocks", lessons.CreateBlock)
+		teacher.PUT("/lesson-blocks/:blockId", lessons.UpdateBlock)
+		teacher.DELETE("/lesson-blocks/:blockId", lessons.DeleteBlock)
+		teacher.POST("/lessons/:id/blocks/reorder", lessons.ReorderBlocks)
 
 		// Тесты — просмотр (все авторизованные)
 		secure.GET("/groups/:id/tests", tests.ListTests)
@@ -107,6 +118,8 @@ func NewRouter(pool *pgxpool.Pool, cfg *config.Config, n notify.Sender) *gin.Eng
 		teacher.POST("/topics", tests.CreateTopic)
 		secure.GET("/topics/:id/subtopics", tests.ListSubtopics)
 		teacher.POST("/topics/:id/subtopics", tests.CreateSubtopic)
+		secure.GET("/topics/:id/tests", topicH.ListTests)
+		secure.POST("/topics/:id/random-test", topicH.StartRandomTest)
 
 		// Прохождение тестов (студент)
 		secure.POST("/tests/:id/attempts", tests.StartAttempt)

@@ -229,9 +229,10 @@ type slotCfg struct {
 }
 
 var (
-	slotCfgMG  = slotCfg{easy: 3, medium: 3, hard: 4}   // Мат. грамотность
-	slotCfgHK  = slotCfg{easy: 6, medium: 7, hard: 7}   // История Казахстана
-	slotCfgPrf = slotCfg{single: 30, multi: 10}           // Profile subjects
+	slotCfgMG  = slotCfg{easy: 3, medium: 3, hard: 4}  // Мат. грамотность
+	slotCfgHK  = slotCfg{easy: 6, medium: 7, hard: 7}  // История Казахстана
+	slotCfgPrf = slotCfg{single: 30, multi: 10}          // Profile subjects
+	slotCfgRC  = slotCfg{easy: 3, medium: 3, hard: 4}  // Грамотность чтения
 )
 
 func (h *ENTHandler) Start(c *gin.Context) {
@@ -262,9 +263,14 @@ func (h *ENTHandler) Start(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "topic История Казахстана not found"})
 		return
 	}
+	topicRC, err := h.q.GetTopicByName(ctx, "Грамотность чтения")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "topic Грамотность чтения not found"})
+		return
+	}
 
 	// Select questions per slot
-	var slot1, slot2, slot3, slot4 []db.Question
+	var slot1, slot2, slot3, slot4, slot5 []db.Question
 
 	for _, pair := range []struct {
 		d int16
@@ -315,6 +321,19 @@ func (h *ENTHandler) Start(c *gin.Context) {
 		})
 	}
 
+	// Slot 5: Грамотность чтения (3 easy + 3 medium + 4 hard)
+	for _, pair := range []struct {
+		d int16
+		n int
+	}{{1, slotCfgRC.easy}, {2, slotCfgRC.medium}, {3, slotCfgRC.hard}} {
+		qs, err := h.selectByDifficulty(ctx, topicRC.ID, pair.d, pair.n)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to select questions"})
+			return
+		}
+		slot5 = append(slot5, qs...)
+	}
+
 	// Create attempt
 	attempt, err := h.q.CreateENTAttempt(ctx, db.CreateENTAttemptParams{
 		UserID:     userID.(int32),
@@ -330,7 +349,7 @@ func (h *ENTHandler) Start(c *gin.Context) {
 	allBySlot := []struct {
 		slot int16
 		qs   []db.Question
-	}{{1, slot1}, {2, slot2}, {3, slot3}, {4, slot4}}
+	}{{1, slot1}, {2, slot2}, {3, slot3}, {4, slot4}, {5, slot5}}
 
 	var allQIDs []int32
 	for _, s := range allBySlot {
@@ -363,9 +382,9 @@ func (h *ENTHandler) Start(c *gin.Context) {
 		}
 	}
 
-	slotTopics := []int32{topicMG.ID, topicHK.ID, user.ProfileSubject1.Int32, user.ProfileSubject2.Int32}
+	slotTopics := []int32{topicMG.ID, topicHK.ID, user.ProfileSubject1.Int32, user.ProfileSubject2.Int32, topicRC.ID}
 
-	sections := make([]entSectionResp, 0, 4)
+	sections := make([]entSectionResp, 0, 5)
 	for i, s := range allBySlot {
 		topicID := slotTopics[i]
 		section := entSectionResp{
@@ -485,7 +504,7 @@ func (h *ENTHandler) GetAttempt(c *gin.Context) {
 		topicNames[t.ID] = t.Name
 	}
 
-	slotTopics := []int32{0, 0, 0, 0} // indices 0-3 for slots 1-4
+	slotTopics := []int32{0, 0, 0, 0, 0} // indices 0-4 for slots 1-5
 	// Resolve fixed topics
 	if t, err := h.q.GetTopicByName(ctx, "Математическая грамотность"); err == nil {
 		slotTopics[0] = t.ID
@@ -495,9 +514,12 @@ func (h *ENTHandler) GetAttempt(c *gin.Context) {
 	}
 	slotTopics[2] = attempt.Subject3ID.Int32
 	slotTopics[3] = attempt.Subject4ID.Int32
+	if t, err := h.q.GetTopicByName(ctx, "Грамотность чтения"); err == nil {
+		slotTopics[4] = t.ID
+	}
 
-	sections := make([]entSectionResp, 0, 4)
-	for slotNum := int16(1); slotNum <= 4; slotNum++ {
+	sections := make([]entSectionResp, 0, 5)
+	for slotNum := int16(1); slotNum <= 5; slotNum++ {
 		aqs := slotQMap[slotNum]
 		topicID := slotTopics[slotNum-1]
 		section := entSectionResp{
@@ -644,7 +666,7 @@ func (h *ENTHandler) Finish(c *gin.Context) {
 	}
 
 	// Score per slot
-	scores := [4]int16{}
+	scores := [5]int16{}
 	for _, aq := range aqRows {
 		opts := optMap[aq.QuestionID]
 		var correctIDs []int32
@@ -663,6 +685,7 @@ func (h *ENTHandler) Finish(c *gin.Context) {
 		Score2: pgtype.Int2{Int16: scores[1], Valid: true},
 		Score3: pgtype.Int2{Int16: scores[2], Valid: true},
 		Score4: pgtype.Int2{Int16: scores[3], Valid: true},
+		Score5: pgtype.Int2{Int16: scores[4], Valid: true},
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
@@ -746,23 +769,27 @@ func (h *ENTHandler) GetResult(c *gin.Context) {
 		topicNames[t.ID] = t.Name
 	}
 
-	slotTopicIDs := [4]int32{0, 0, attempt.Subject3ID.Int32, attempt.Subject4ID.Int32}
+	slotTopicIDs := [5]int32{0, 0, attempt.Subject3ID.Int32, attempt.Subject4ID.Int32, 0}
 	if t, err := h.q.GetTopicByName(ctx, "Математическая грамотность"); err == nil {
 		slotTopicIDs[0] = t.ID
 	}
 	if t, err := h.q.GetTopicByName(ctx, "История Казахстана"); err == nil {
 		slotTopicIDs[1] = t.ID
 	}
-
-	slotScores := [4]int16{
-		attempt.Score1.Int16, attempt.Score2.Int16,
-		attempt.Score3.Int16, attempt.Score4.Int16,
+	if t, err := h.q.GetTopicByName(ctx, "Грамотность чтения"); err == nil {
+		slotTopicIDs[4] = t.ID
 	}
 
-	sections := make([]entSectionResult, 0, 4)
+	slotScores := [5]int16{
+		attempt.Score1.Int16, attempt.Score2.Int16,
+		attempt.Score3.Int16, attempt.Score4.Int16,
+		attempt.Score5.Int16,
+	}
+
+	sections := make([]entSectionResult, 0, 5)
 	var totalScore, totalMax int16
 
-	for slotNum := int16(1); slotNum <= 4; slotNum++ {
+	for slotNum := int16(1); slotNum <= 5; slotNum++ {
 		aqs := slotQMap[slotNum]
 		topicID := slotTopicIDs[slotNum-1]
 		section := entSectionResult{
@@ -855,8 +882,8 @@ func (h *ENTHandler) ListMine(c *gin.Context) {
 		item.Subject3Name = topicNames[a.Subject3ID.Int32]
 		item.Subject4Name = topicNames[a.Subject4ID.Int32]
 		if a.FinishedAt.Valid {
-			item.TotalScore = a.Score1.Int16 + a.Score2.Int16 + a.Score3.Int16 + a.Score4.Int16
-			item.TotalMax = 10 + 20 + 50 + 50
+			item.TotalScore = a.Score1.Int16 + a.Score2.Int16 + a.Score3.Int16 + a.Score4.Int16 + a.Score5.Int16
+			item.TotalMax = 10 + 20 + 50 + 50 + 10
 		}
 		result = append(result, item)
 	}

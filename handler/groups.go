@@ -35,9 +35,10 @@ func generateInviteCode() string {
 
 // POST /api/v1/groups
 type createGroupReq struct {
-	Name   string `json:"name" binding:"required"`
-	City   string `json:"city" binding:"required"`
-	School string `json:"school" binding:"required"`
+	Name     string `json:"name" binding:"required"`
+	City     string `json:"city" binding:"required"`
+	School   string `json:"school" binding:"required"`
+	Category string `json:"category"` // platform | course | school (default: school)
 }
 
 func (h *GroupHandler) Create(c *gin.Context) {
@@ -45,6 +46,10 @@ func (h *GroupHandler) Create(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	cat := req.Category
+	if cat != "platform" && cat != "course" {
+		cat = "school"
 	}
 
 	teacherID, _ := c.Get("user_id")
@@ -55,6 +60,7 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		School:     req.School,
 		TeacherID:  teacherID.(int32),
 		InviteCode: code,
+		Category:   cat,
 	})
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "group already exists"})

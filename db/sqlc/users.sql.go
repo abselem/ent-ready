@@ -23,7 +23,7 @@ func (q *Queries) BanUser(ctx context.Context, id int32) error {
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (phone, first_name, last_name, middle_name, city, role_id)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, phone, first_name, last_name, middle_name, city, role_id, password_hash, telegram_chat_id, is_banned, created_at, updated_at, profile_subject1, profile_subject2
+RETURNING id, phone, first_name, last_name, middle_name, city, role_id, password_hash, telegram_chat_id, is_banned, created_at, updated_at, profile_subject1, profile_subject2, avatar_url
 `
 
 type CreateUserParams struct {
@@ -60,12 +60,13 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.UpdatedAt,
 		&i.ProfileSubject1,
 		&i.ProfileSubject2,
+		&i.AvatarUrl,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, phone, first_name, last_name, middle_name, city, role_id, password_hash, telegram_chat_id, is_banned, created_at, updated_at, profile_subject1, profile_subject2 FROM users WHERE id = $1
+SELECT id, phone, first_name, last_name, middle_name, city, role_id, password_hash, telegram_chat_id, is_banned, created_at, updated_at, profile_subject1, profile_subject2, avatar_url FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id int32) (User, error) {
@@ -86,12 +87,13 @@ func (q *Queries) GetUserByID(ctx context.Context, id int32) (User, error) {
 		&i.UpdatedAt,
 		&i.ProfileSubject1,
 		&i.ProfileSubject2,
+		&i.AvatarUrl,
 	)
 	return i, err
 }
 
 const getUserByPhone = `-- name: GetUserByPhone :one
-SELECT id, phone, first_name, last_name, middle_name, city, role_id, password_hash, telegram_chat_id, is_banned, created_at, updated_at, profile_subject1, profile_subject2 FROM users WHERE phone = $1
+SELECT id, phone, first_name, last_name, middle_name, city, role_id, password_hash, telegram_chat_id, is_banned, created_at, updated_at, profile_subject1, profile_subject2, avatar_url FROM users WHERE phone = $1
 `
 
 func (q *Queries) GetUserByPhone(ctx context.Context, phone string) (User, error) {
@@ -112,6 +114,7 @@ func (q *Queries) GetUserByPhone(ctx context.Context, phone string) (User, error
 		&i.UpdatedAt,
 		&i.ProfileSubject1,
 		&i.ProfileSubject2,
+		&i.AvatarUrl,
 	)
 	return i, err
 }
@@ -172,7 +175,7 @@ UPDATE users
 SET first_name = $2, last_name = $3, middle_name = $4, city = $5,
     profile_subject1 = $6, profile_subject2 = $7
 WHERE id = $1
-RETURNING id, phone, first_name, last_name, middle_name, city, role_id, password_hash, telegram_chat_id, is_banned, created_at, updated_at, profile_subject1, profile_subject2
+RETURNING id, phone, first_name, last_name, middle_name, city, role_id, password_hash, telegram_chat_id, is_banned, created_at, updated_at, profile_subject1, profile_subject2, avatar_url
 `
 
 type UpdateUserProfileParams struct {
@@ -211,6 +214,7 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 		&i.UpdatedAt,
 		&i.ProfileSubject1,
 		&i.ProfileSubject2,
+		&i.AvatarUrl,
 	)
 	return i, err
 }

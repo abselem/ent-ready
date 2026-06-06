@@ -19,12 +19,13 @@ interface ENTAttempt {
   score2: number | null;
   score3: number | null;
   score4: number | null;
+  score5: number | null;
   total_score: number;
   total_max: number;
 }
 
-const SLOT_LABELS = ["Мат. грамотность", "История Казахстана"];
-const SLOT_MAX = [10, 20, 50, 50];
+const SLOT_LABELS = ["Мат. грамотность", "История Казахстана", "", "", "Грамот. чтения"];
+const SLOT_MAX = [10, 20, 50, 50, 10];
 
 export default function ENTPage() {
   const router = useRouter();
@@ -59,7 +60,7 @@ export default function ENTPage() {
     <div className="p-4 md:p-6 max-w-2xl mx-auto">
       <h1 className="text-2xl font-bold mb-2">ЕНТ Пробный тест</h1>
       <p className="text-sm text-muted-foreground mb-6">
-        110 вопросов · 4 предмета · Мат. грамотность + История Казахстана + 2 профильных
+        120 вопросов · 5 предметов · 240 минут
       </p>
 
       {/* Structure info */}
@@ -67,21 +68,24 @@ export default function ENTPage() {
         <CardContent className="pt-4">
           <div className="grid grid-cols-2 gap-3 text-sm">
             {[
-              { name: "Мат. грамотность", info: "3 лёгких + 3 средних + 4 сложных", max: 10 },
-              { name: "История Казахстана", info: "6 лёгких + 7 средних + 7 сложных", max: 20 },
-              { name: "Профильный 1", info: "30 одиночных + 10 множественных", max: 50 },
-              { name: "Профильный 2", info: "30 одиночных + 10 множественных", max: 50 },
+              { name: "Мат. грамотность",   max: 10 },
+              { name: "История Казахстана", max: 20 },
+              { name: "Грамотность чтения", max: 10 },
+              { name: "Профильный 1",       max: 50 },
+              { name: "Профильный 2",       max: 50 },
             ].map((s) => (
               <div key={s.name} className="border border-border rounded-lg p-3">
                 <p className="font-medium text-sm">{s.name}</p>
-                <p className="text-xs text-muted-foreground mt-0.5">{s.info}</p>
                 <p className="text-xs font-semibold text-primary mt-1">макс. {s.max} б.</p>
               </div>
             ))}
           </div>
           <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground border-t border-border pt-3">
-            <span>Итого вопросов: <b className="text-foreground">110</b></span>
-            <span>Максимум баллов: <b className="text-foreground">130</b></span>
+            <span>Итого вопросов: <b className="text-foreground">120</b></span>
+            <span className="flex items-center gap-2">
+              <span>⏱ <b className="text-foreground">240 мин</b></span>
+              <span>Макс. баллов: <b className="text-foreground">140</b></span>
+            </span>
           </div>
         </CardContent>
       </Card>
@@ -143,10 +147,12 @@ export default function ENTPage() {
                       <div className={`h-full rounded-full ${p >= 80 ? "bg-green-500" : p >= 50 ? "bg-yellow-500" : "bg-destructive"}`}
                         style={{ width: `${p}%` }} />
                     </div>
-                    <div className="grid grid-cols-4 gap-1 text-xs text-center">
-                      {[a.score1, a.score2, a.score3, a.score4].map((s, i) => (
+                    <div className="grid grid-cols-5 gap-1 text-xs text-center">
+                      {[a.score1, a.score2, a.score3, a.score4, a.score5].map((s, i) => (
                         <div key={i} className="bg-muted/50 rounded px-1 py-1">
-                          <p className="text-muted-foreground truncate">{i < 2 ? SLOT_LABELS[i] : (i === 2 ? a.subject3_name : a.subject4_name)}</p>
+                          <p className="text-muted-foreground truncate">
+                            {i === 2 ? a.subject3_name : i === 3 ? a.subject4_name : SLOT_LABELS[i]}
+                          </p>
                           <p className="font-semibold">{s ?? 0}/{SLOT_MAX[i]}</p>
                         </div>
                       ))}

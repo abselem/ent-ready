@@ -23,12 +23,7 @@ type AddStudentToGroupParams struct {
 func (q *Queries) AddStudentToGroup(ctx context.Context, arg AddStudentToGroupParams) (UserGroup, error) {
 	row := q.db.QueryRow(ctx, addStudentToGroup, arg.UserID, arg.GroupID)
 	var i UserGroup
-	err := row.Scan(
-		&i.ID,
-		&i.UserID,
-		&i.GroupID,
-		&i.JoinedAt,
-	)
+	err := row.Scan(&i.ID, &i.UserID, &i.GroupID, &i.JoinedAt)
 	return i, err
 }
 
@@ -44,9 +39,9 @@ func (q *Queries) CountUserGroups(ctx context.Context, userID int32) (int64, err
 }
 
 const createGroup = `-- name: CreateGroup :one
-INSERT INTO groups (name, city, school, teacher_id, invite_code)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, name, city, school, teacher_id, created_at, updated_at, invite_code
+INSERT INTO groups (name, city, school, teacher_id, invite_code, category)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, name, city, school, teacher_id, created_at, updated_at, invite_code, category
 `
 
 type CreateGroupParams struct {
@@ -55,72 +50,55 @@ type CreateGroupParams struct {
 	School     string `json:"school"`
 	TeacherID  int32  `json:"teacher_id"`
 	InviteCode string `json:"invite_code"`
+	Category   string `json:"category"`
 }
 
 func (q *Queries) CreateGroup(ctx context.Context, arg CreateGroupParams) (Group, error) {
 	row := q.db.QueryRow(ctx, createGroup,
-		arg.Name,
-		arg.City,
-		arg.School,
-		arg.TeacherID,
-		arg.InviteCode,
+		arg.Name, arg.City, arg.School,
+		arg.TeacherID, arg.InviteCode, arg.Category,
 	)
 	var i Group
 	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.City,
-		&i.School,
-		&i.TeacherID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.InviteCode,
+		&i.ID, &i.Name, &i.City, &i.School,
+		&i.TeacherID, &i.CreatedAt, &i.UpdatedAt,
+		&i.InviteCode, &i.Category,
 	)
 	return i, err
 }
 
 const getGroupByCode = `-- name: GetGroupByCode :one
-SELECT id, name, city, school, teacher_id, created_at, updated_at, invite_code FROM groups WHERE invite_code = $1
+SELECT id, name, city, school, teacher_id, created_at, updated_at, invite_code, category FROM groups WHERE invite_code = $1
 `
 
 func (q *Queries) GetGroupByCode(ctx context.Context, inviteCode string) (Group, error) {
 	row := q.db.QueryRow(ctx, getGroupByCode, inviteCode)
 	var i Group
 	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.City,
-		&i.School,
-		&i.TeacherID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.InviteCode,
+		&i.ID, &i.Name, &i.City, &i.School,
+		&i.TeacherID, &i.CreatedAt, &i.UpdatedAt,
+		&i.InviteCode, &i.Category,
 	)
 	return i, err
 }
 
 const getGroupByID = `-- name: GetGroupByID :one
-SELECT id, name, city, school, teacher_id, created_at, updated_at, invite_code FROM groups WHERE id = $1
+SELECT id, name, city, school, teacher_id, created_at, updated_at, invite_code, category FROM groups WHERE id = $1
 `
 
 func (q *Queries) GetGroupByID(ctx context.Context, id int32) (Group, error) {
 	row := q.db.QueryRow(ctx, getGroupByID, id)
 	var i Group
 	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.City,
-		&i.School,
-		&i.TeacherID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.InviteCode,
+		&i.ID, &i.Name, &i.City, &i.School,
+		&i.TeacherID, &i.CreatedAt, &i.UpdatedAt,
+		&i.InviteCode, &i.Category,
 	)
 	return i, err
 }
 
 const getGroupByIdentity = `-- name: GetGroupByIdentity :one
-SELECT id, name, city, school, teacher_id, created_at, updated_at, invite_code FROM groups WHERE city = $1 AND school = $2 AND name = $3
+SELECT id, name, city, school, teacher_id, created_at, updated_at, invite_code, category FROM groups WHERE city = $1 AND school = $2 AND name = $3
 `
 
 type GetGroupByIdentityParams struct {
@@ -133,20 +111,15 @@ func (q *Queries) GetGroupByIdentity(ctx context.Context, arg GetGroupByIdentity
 	row := q.db.QueryRow(ctx, getGroupByIdentity, arg.City, arg.School, arg.Name)
 	var i Group
 	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.City,
-		&i.School,
-		&i.TeacherID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.InviteCode,
+		&i.ID, &i.Name, &i.City, &i.School,
+		&i.TeacherID, &i.CreatedAt, &i.UpdatedAt,
+		&i.InviteCode, &i.Category,
 	)
 	return i, err
 }
 
 const getGroupsByTeacher = `-- name: GetGroupsByTeacher :many
-SELECT id, name, city, school, teacher_id, created_at, updated_at, invite_code FROM groups WHERE teacher_id = $1 ORDER BY created_at DESC
+SELECT id, name, city, school, teacher_id, created_at, updated_at, invite_code, category FROM groups WHERE teacher_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) GetGroupsByTeacher(ctx context.Context, teacherID int32) ([]Group, error) {
@@ -159,27 +132,19 @@ func (q *Queries) GetGroupsByTeacher(ctx context.Context, teacherID int32) ([]Gr
 	for rows.Next() {
 		var i Group
 		if err := rows.Scan(
-			&i.ID,
-			&i.Name,
-			&i.City,
-			&i.School,
-			&i.TeacherID,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.InviteCode,
+			&i.ID, &i.Name, &i.City, &i.School,
+			&i.TeacherID, &i.CreatedAt, &i.UpdatedAt,
+			&i.InviteCode, &i.Category,
 		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+	return items, rows.Err()
 }
 
 const getGroupsByUser = `-- name: GetGroupsByUser :many
-SELECT g.id, g.name, g.city, g.school, g.teacher_id, g.created_at, g.updated_at, g.invite_code FROM groups g
+SELECT g.id, g.name, g.city, g.school, g.teacher_id, g.created_at, g.updated_at, g.invite_code, g.category FROM groups g
 JOIN user_groups ug ON ug.group_id = g.id
 WHERE ug.user_id = $1
 ORDER BY ug.joined_at
@@ -195,27 +160,19 @@ func (q *Queries) GetGroupsByUser(ctx context.Context, userID int32) ([]Group, e
 	for rows.Next() {
 		var i Group
 		if err := rows.Scan(
-			&i.ID,
-			&i.Name,
-			&i.City,
-			&i.School,
-			&i.TeacherID,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.InviteCode,
+			&i.ID, &i.Name, &i.City, &i.School,
+			&i.TeacherID, &i.CreatedAt, &i.UpdatedAt,
+			&i.InviteCode, &i.Category,
 		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+	return items, rows.Err()
 }
 
 const getStudentsByGroup = `-- name: GetStudentsByGroup :many
-SELECT u.id, u.phone, u.first_name, u.last_name, u.middle_name, u.city, u.role_id, u.password_hash, u.telegram_chat_id, u.is_banned, u.created_at, u.updated_at, u.profile_subject1, u.profile_subject2 FROM users u
+SELECT u.id, u.phone, u.first_name, u.last_name, u.middle_name, u.city, u.role_id, u.password_hash, u.telegram_chat_id, u.is_banned, u.created_at, u.updated_at, u.profile_subject1, u.profile_subject2, u.avatar_url FROM users u
 JOIN user_groups ug ON ug.user_id = u.id
 WHERE ug.group_id = $1
 ORDER BY u.last_name, u.first_name
@@ -231,29 +188,16 @@ func (q *Queries) GetStudentsByGroup(ctx context.Context, groupID int32) ([]User
 	for rows.Next() {
 		var i User
 		if err := rows.Scan(
-			&i.ID,
-			&i.Phone,
-			&i.FirstName,
-			&i.LastName,
-			&i.MiddleName,
-			&i.City,
-			&i.RoleID,
-			&i.PasswordHash,
-			&i.TelegramChatID,
-			&i.IsBanned,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.ProfileSubject1,
-			&i.ProfileSubject2,
+			&i.ID, &i.Phone, &i.FirstName, &i.LastName,
+			&i.MiddleName, &i.City, &i.RoleID, &i.PasswordHash,
+			&i.TelegramChatID, &i.IsBanned, &i.CreatedAt, &i.UpdatedAt,
+			&i.ProfileSubject1, &i.ProfileSubject2, &i.AvatarUrl,
 		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+	return items, rows.Err()
 }
 
 const removeStudentFromGroup = `-- name: RemoveStudentFromGroup :exec

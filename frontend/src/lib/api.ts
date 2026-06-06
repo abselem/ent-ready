@@ -1,8 +1,11 @@
 import axios from "axios";
 
-export const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080/api/v1",
-});
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080/api/v1";
+
+export const api = axios.create({ baseURL: API_URL });
+
+// Базовый URL бэкенда без /api/v1 — нужен для отображения загруженных файлов
+export const apiOrigin = API_URL.replace(/\/api\/v1\/?$/, "");
 
 // Подставляем access-токен в каждый запрос
 api.interceptors.request.use((config) => {

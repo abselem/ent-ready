@@ -14,11 +14,38 @@ import (
 )
 
 type UserHandler struct {
-	q db.Querier
+	q    db.Querier
+	pool *pgxpool.Pool
 }
 
 func NewUserHandler(pool *pgxpool.Pool, _ *config.Config) *UserHandler {
-	return &UserHandler{q: db.New(pool)}
+	return &UserHandler{q: db.New(pool), pool: pool}
+}
+
+// POST /api/v1/users/me/avatar
+func (h *UserHandler) UploadAvatar(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+
+	// Reuse image upload logic, save to avatars subdirectory
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUploadSize)
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "файл не получен"})
+		return
+	}
+	defer file.Close()
+
+	url, err := saveUploadedImage(file, header.Filename, "avatars")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Update user avatar_url
+	h.pool.Exec(context.Background(),
+		`UPDATE users SET avatar_url = $2 WHERE id = $1`, userID.(int32), url)
+
+	c.JSON(http.StatusOK, gin.H{"avatar_url": url})
 }
 
 // GET /api/v1/users/me

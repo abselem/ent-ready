@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/auth";
-import { clearTokens } from "@/lib/api";
+import { clearTokens, apiOrigin } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 export interface NavItem {
@@ -22,6 +22,22 @@ function Logo() {
       <rect x="6" y="6" width="88" height="88" rx="22" stroke="#26C0BD" strokeWidth="9" strokeLinecap="round"/>
       <path d="M24 52 L42 70 L76 32" stroke="#26C0BD" strokeWidth="11" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
+  );
+}
+
+function Avatar({ user }: { user: { first_name: string; last_name: string; avatar_url?: { String: string; Valid: boolean } | null } | null }) {
+  if (!user) return null;
+  const raw = user.avatar_url?.Valid ? user.avatar_url.String : null;
+  const src = raw ? (raw.startsWith("/static/") ? `${apiOrigin}${raw}` : raw) : null;
+  const initials = `${user.first_name[0] ?? ""}${user.last_name[0] ?? ""}`.toUpperCase();
+
+  return src ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={src} alt={user.first_name} className="w-8 h-8 rounded-full object-cover shrink-0 border border-border" />
+  ) : (
+    <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-xs font-bold text-primary-foreground shrink-0">
+      {initials}
+    </div>
   );
 }
 
@@ -78,18 +94,23 @@ export function Nav({ items }: NavProps) {
           })}
         </nav>
 
-        <div className="px-4 py-4 border-t border-border">
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-              <polyline points="16 17 21 12 16 7"/>
-              <line x1="21" y1="12" x2="9" y2="12"/>
-            </svg>
-            Выйти
-          </button>
+        {/* User row at bottom */}
+        <div className="px-4 py-3 border-t border-border flex items-center gap-2.5">
+          <Avatar user={user} />
+          <div className="min-w-0 flex-1">
+            {user && <p className="text-xs font-medium truncate">{user.first_name} {user.last_name}</p>}
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors mt-0.5"
+            >
+              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                <polyline points="16 17 21 12 16 7"/>
+                <line x1="21" y1="12" x2="9" y2="12"/>
+              </svg>
+              Выйти
+            </button>
+          </div>
         </div>
       </aside>
 

@@ -36,6 +36,7 @@ type EntAttempt struct {
 	Score2     pgtype.Int2        `json:"score2"`
 	Score3     pgtype.Int2        `json:"score3"`
 	Score4     pgtype.Int2        `json:"score4"`
+	Score5     pgtype.Int2        `json:"score5"`
 }
 
 type EntAttemptQuestion struct {
@@ -60,6 +61,7 @@ type Group struct {
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 	InviteCode string             `json:"invite_code"`
+	Category   string             `json:"category"`
 }
 
 type Lesson struct {
@@ -190,6 +192,7 @@ type User struct {
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 	ProfileSubject1 pgtype.Int4        `json:"profile_subject1"`
 	ProfileSubject2 pgtype.Int4        `json:"profile_subject2"`
+	AvatarUrl       pgtype.Text        `json:"avatar_url"`
 }
 
 type UserGroup struct {

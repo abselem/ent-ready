@@ -24,7 +24,9 @@ export default function TeacherGroupsPage() {
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
+  const [city, setCity] = useState("");
+  const [school, setSchool] = useState("");
+  const [category, setCategory] = useState<"school" | "course" | "platform">("school");
   const [error, setError] = useState("");
 
   const { data: groups = [], isLoading } = useQuery({
@@ -33,21 +35,19 @@ export default function TeacherGroupsPage() {
   });
 
   const createGroup = useMutation({
-    mutationFn: (body: { name: string; description: string }) =>
+    mutationFn: (body: { name: string; city: string; school: string; category: string }) =>
       api.post("/groups", body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["groups"] });
       setShowForm(false);
-      setName("");
-      setDescription("");
-      setError("");
+      setName(""); setCity(""); setSchool(""); setCategory("school"); setError("");
     },
     onError: () => setError("Не удалось создать группу"),
   });
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    createGroup.mutate({ name, description });
+    createGroup.mutate({ name, city, school, category });
   }
 
   return (
@@ -68,19 +68,46 @@ export default function TeacherGroupsPage() {
             <form onSubmit={handleCreate} className="flex flex-col gap-3">
               <Input
                 id="name"
-                label="Название"
+                label="Название группы"
                 placeholder="Математика 10А"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 required
               />
               <Input
-                id="description"
-                label="Описание"
-                placeholder="Описание группы"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
+                id="city"
+                label="Город"
+                placeholder="Алматы"
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
+                required
               />
+              <Input
+                id="school"
+                label="Школа / Организация"
+                placeholder="НИШ №1"
+                value={school}
+                onChange={(e) => setSchool(e.target.value)}
+                required
+              />
+              <div className="flex flex-col gap-1">
+                <label className="text-sm font-medium">Тип группы</label>
+                <div className="flex rounded-xl border border-border overflow-hidden">
+                  {([
+                    { value: "school",   label: "Школа" },
+                    { value: "course",   label: "Курс" },
+                    { value: "platform", label: "От нас" },
+                  ] as const).map(opt => (
+                    <button key={opt.value} type="button"
+                      onClick={() => setCategory(opt.value)}
+                      className={`flex-1 py-2 text-sm font-medium transition-colors ${
+                        category === opt.value ? "bg-primary text-primary-foreground" : "bg-card hover:bg-muted"
+                      }`}>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               {error && <p className="text-sm text-destructive">{error}</p>}
               <Button type="submit" loading={createGroup.isPending}>
                 Создать
