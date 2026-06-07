@@ -121,7 +121,10 @@ func (h *AuthHandler) SendOTP(c *gin.Context) {
 		return
 	}
 
-	_ = h.notifier.SendOTP(c.Request.Context(), req.Email, 0, code)
+	if err := h.notifier.SendOTP(c.Request.Context(), req.Email, 0, code); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Не удалось отправить код. Попробуйте позже."})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "code sent"})
 }
