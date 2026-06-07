@@ -1,9 +1,9 @@
 [build]
 builder = "NIXPACKS"
-buildCommand = "npm ci && npm run build"
+buildCommand = "npm ci && npm run build && ls .next/standalone/server.js"
 
 [deploy]
-startCommand = "npm start"
+startCommand = "node .next/standalone/server.js"
 healthcheckPath = "/"
 healthcheckTimeout = 60
 restartPolicyType = "on_failure"
