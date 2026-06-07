@@ -1,9 +1,9 @@
 [build]
-builder = "RAILPACK"
-buildCommand = "npm run build"
+builder = "NIXPACKS"
+buildCommand = "npm ci && npm run build"
 
 [deploy]
-startCommand = "node .next/standalone/server.js"
+startCommand = "npm start"
 healthcheckPath = "/"
-healthcheckTimeout = 30
+healthcheckTimeout = 60
 restartPolicyType = "on_failure"
