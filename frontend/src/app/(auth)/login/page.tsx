@@ -12,18 +12,24 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 
 type Mode = "password" | "otp";
 
+function isEmail(s: string) {
+  return s.includes("@");
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const { setTokens, setUser } = useAuthStore();
 
   const [mode, setMode] = useState<Mode>("password");
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [otpSent, setOtpSent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [resendCooldown, setResendCooldown] = useState(0);
+
+  const identifierIsEmail = isEmail(identifier.trim());
 
   function startResendCooldown() {
     setResendCooldown(60);
@@ -39,7 +45,7 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      await api.post("/auth/send-otp", { email: email.trim(), purpose: "login" });
+      await api.post("/auth/send-otp", { email: identifier.trim().toLowerCase(), purpose: "login" });
       setOtpSent(true);
       startResendCooldown();
     } catch (err: unknown) {
@@ -57,8 +63,8 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const { data } = mode === "password"
-        ? await api.post("/auth/login", { email: email.trim(), password })
-        : await api.post("/auth/login/otp", { email: email.trim(), code });
+        ? await api.post("/auth/login", { identifier: identifier.trim(), password })
+        : await api.post("/auth/login/otp", { email: identifier.trim().toLowerCase(), code });
 
       saveTokens(data.access_token, data.refresh_token);
       setTokens(data.access_token, data.refresh_token);
@@ -93,27 +99,35 @@ export default function LoginPage() {
           </CardContent>
         </CardHeader>
 
-        {/* Mode switcher */}
-        <div className="flex rounded-lg border border-border overflow-hidden mb-5">
-          <button onClick={() => { setMode("password"); setError(""); setOtpSent(false); }}
-            className={`flex-1 py-2 text-sm font-medium transition-colors ${mode === "password" ? "bg-primary text-primary-foreground" : "bg-card hover:bg-muted"}`}>
-            Пароль
-          </button>
-          <button onClick={() => { setMode("otp"); setError(""); }}
-            className={`flex-1 py-2 text-sm font-medium transition-colors ${mode === "otp" ? "bg-primary text-primary-foreground" : "bg-card hover:bg-muted"}`}>
-            Код на email
-          </button>
-        </div>
+        {/* Mode switcher — только для email */}
+        {identifierIsEmail && (
+          <div className="flex rounded-lg border border-border overflow-hidden mb-5">
+            <button onClick={() => { setMode("password"); setError(""); setOtpSent(false); }}
+              className={`flex-1 py-2 text-sm font-medium transition-colors ${mode === "password" ? "bg-primary text-primary-foreground" : "bg-card hover:bg-muted"}`}>
+              Пароль
+            </button>
+            <button onClick={() => { setMode("otp"); setError(""); }}
+              className={`flex-1 py-2 text-sm font-medium transition-colors ${mode === "otp" ? "bg-primary text-primary-foreground" : "bg-card hover:bg-muted"}`}>
+              Код на email
+            </button>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <Input
-            id="email" label="Email" type="email"
-            placeholder="example@mail.com"
-            value={email} onChange={e => { setEmail(e.target.value); setError(""); }}
-            autoComplete="email"
+            id="identifier" label="Email или номер телефона"
+            type="text" placeholder="+7 777 123 45 67 или email@mail.com"
+            value={identifier}
+            onChange={e => {
+              setIdentifier(e.target.value);
+              setError("");
+              setOtpSent(false);
+              if (!isEmail(e.target.value)) setMode("password");
+            }}
+            autoComplete="username"
           />
 
-          {mode === "password" && (
+          {(mode === "password" || !identifierIsEmail) && (
             <Input
               id="password" label="Пароль" type="password"
               placeholder="••••••••"
@@ -122,17 +136,17 @@ export default function LoginPage() {
             />
           )}
 
-          {mode === "otp" && (
+          {mode === "otp" && identifierIsEmail && (
             <>
               {!otpSent ? (
                 <Button type="button" variant="outline" loading={loading}
-                  onClick={handleSendOTP} disabled={!email.trim()}>
+                  onClick={handleSendOTP} disabled={!identifier.trim()}>
                   Отправить код на email
                 </Button>
               ) : (
                 <>
                   <div className="bg-muted/50 rounded-xl p-3 text-sm text-muted-foreground">
-                    Код отправлен на <span className="text-foreground font-medium">{email}</span>
+                    Код отправлен на <span className="text-foreground font-medium">{identifier}</span>
                   </div>
                   <Input
                     id="code" label="Код из письма" type="text"
@@ -163,7 +177,7 @@ export default function LoginPage() {
 
           <Button
             type="submit" size="lg" loading={loading} className="w-full"
-            disabled={mode === "otp" && !otpSent}
+            disabled={mode === "otp" && identifierIsEmail && !otpSent}
           >
             Войти
           </Button>

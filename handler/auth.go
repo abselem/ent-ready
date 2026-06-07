@@ -23,6 +23,22 @@ func (h *AuthHandler) roleCode(ctx context.Context, roleID int32) string {
 	return r.Code
 }
 
+// getUserByPhone returns user by phone using raw query
+func (h *AuthHandler) getUserByPhone(ctx context.Context, phone string) (db.User, error) {
+	var u db.User
+	err := h.pool.QueryRow(ctx, `
+		SELECT id, phone, email, first_name, last_name, middle_name, city,
+		       role_id, password_hash, telegram_chat_id, is_banned,
+		       created_at, updated_at, profile_subject1, profile_subject2, avatar_url
+		FROM users WHERE phone = $1
+	`, phone).Scan(
+		&u.ID, &u.Phone, &u.Email, &u.FirstName, &u.LastName, &u.MiddleName, &u.City,
+		&u.RoleID, &u.PasswordHash, &u.TelegramChatID, &u.IsBanned,
+		&u.CreatedAt, &u.UpdatedAt, &u.ProfileSubject1, &u.ProfileSubject2, &u.AvatarUrl,
+	)
+	return u, err
+}
+
 // getUserByEmail returns user by email using raw query
 func (h *AuthHandler) getUserByEmail(ctx context.Context, email string) (db.User, error) {
 	var u db.User
@@ -184,8 +200,8 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 // POST /api/v1/auth/login
 type loginReq struct {
-	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required"`
+	Identifier string `json:"identifier" binding:"required"` // email or phone
+	Password   string `json:"password" binding:"required"`
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
@@ -194,11 +210,17 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	req.Identifier = strings.TrimSpace(req.Identifier)
 
-	user, err := h.getUserByEmail(context.Background(), req.Email)
+	var user db.User
+	var err error
+	if strings.Contains(req.Identifier, "@") {
+		user, err = h.getUserByEmail(context.Background(), strings.ToLower(req.Identifier))
+	} else {
+		user, err = h.getUserByPhone(context.Background(), req.Identifier)
+	}
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Неверный email или пароль"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Неверный логин или пароль"})
 		return
 	}
 	if user.IsBanned {
