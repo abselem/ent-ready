@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { MathText } from "@/components/math-text";
 
 interface ENTOption { id: number; text: string; order_num: number }
 interface ENTQuestion {
@@ -146,7 +147,7 @@ export default function ENTQuizPage({ params }: { params: Promise<{ id: string }
                     <div className="flex items-start gap-2 mb-3">
                       <span className="text-xs font-semibold text-muted-foreground shrink-0 mt-0.5">{qi + 1}.</span>
                       <div className="flex-1">
-                        <p className="text-sm font-medium leading-snug">{q.text}</p>
+                        <p className="text-sm font-medium leading-snug"><MathText text={q.text} /></p>
                         {q.is_multi && (
                           <span className="inline-block mt-1 text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
                             Несколько ответов
@@ -186,7 +187,7 @@ export default function ENTQuizPage({ params }: { params: Promise<{ id: string }
                             }`}>
                               {isSelected && <div className="w-2.5 h-2.5 rounded-full bg-primary" />}
                             </div>
-                            <span className="text-sm leading-snug">{opt.text}</span>
+                            <span className="text-sm leading-snug"><MathText text={opt.text} /></span>
                           </label>
                         );
                       })}

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { MathText } from "@/components/math-text";
 
 interface AnswerOption { id: number; text: string }
 interface Question { id: number; text: string; order_num: number; options: AnswerOption[] }
@@ -120,14 +121,14 @@ export default function TakeTestPage({ params }: { params: Promise<{ id: string 
           <div className="flex flex-col gap-3 mb-6">
             {(result.questions ?? []).map((q) => (
               <Card key={q.id} className={q.is_correct ? "border-green-500" : "border-destructive"}>
-                <CardHeader><CardTitle className="text-sm font-medium">{q.text}</CardTitle></CardHeader>
+                <CardHeader><CardTitle className="text-sm font-medium"><MathText text={q.text} /></CardTitle></CardHeader>
                 <CardContent>
                   {q.options.map((opt) => (
                     <div key={opt.id} className={`text-sm px-3 py-1.5 rounded mb-1 ${
                       opt.chosen && opt.is_correct ? "bg-green-100 text-green-800" :
                       opt.chosen && !opt.is_correct ? "bg-red-100 text-red-800" :
                       opt.is_correct ? "bg-green-50 text-green-700" : ""
-                    }`}>{opt.text}</div>
+                    }`}><MathText text={opt.text} /></div>
                   ))}
                 </CardContent>
               </Card>
@@ -187,7 +188,7 @@ export default function TakeTestPage({ params }: { params: Promise<{ id: string 
       </div>
 
       <Card className="mb-6">
-        <CardHeader><CardTitle className="text-base font-medium">{q.text}</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base font-medium"><MathText text={q.text} /></CardTitle></CardHeader>
         <CardContent>
           <div className="flex flex-col gap-2">
             {q.options.map((opt) => (
@@ -195,7 +196,7 @@ export default function TakeTestPage({ params }: { params: Promise<{ id: string 
                 className={`text-left px-4 py-3 rounded-lg border-2 transition-colors text-sm ${
                   selected[q.id] === opt.id ? "border-primary bg-primary/10" : "border-border hover:border-primary/50"
                 }`}>
-                {opt.text}
+                <MathText text={opt.text} />
               </button>
             ))}
           </div>

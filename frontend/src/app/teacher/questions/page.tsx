@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { MathText } from "@/components/math-text";
 
 interface Topic { id: number; name: string }
 interface Subtopic { id: number; topic_id: number; name: string }
@@ -136,8 +137,16 @@ export default function QuestionBankPage() {
           <CardHeader><CardTitle>{editId ? "Редактировать вопрос" : "Новый вопрос"}</CardTitle></CardHeader>
           <CardContent>
             <div className="flex flex-col gap-3">
-              <Input id="qtext" label="Текст вопроса" placeholder="Введите вопрос..."
-                value={text} onChange={(e) => setText(e.target.value)} />
+              <div className="flex flex-col gap-1">
+                <Input id="qtext" label="Текст вопроса" placeholder="Введите вопрос... Формулы: $log_2(x)$"
+                  value={text} onChange={(e) => setText(e.target.value)} />
+                {text.includes("$") && (
+                  <div className="text-xs text-muted-foreground bg-muted/30 px-3 py-1.5 rounded-lg">
+                    Предпросмотр: <MathText text={text} />
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">Формулы: <code className="bg-muted px-1 rounded">$inline$</code> или <code className="bg-muted px-1 rounded">$$block$$</code></p>
+              </div>
               <Input id="qpoints" label="Баллы" type="number" min="1"
                 value={points} onChange={(e) => setPoints(e.target.value)} />
 

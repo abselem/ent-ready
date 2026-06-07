@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { MathText } from "@/components/math-text";
 
 interface OptionResult {
   id: number;
@@ -96,7 +97,7 @@ export default function AttemptReviewPage({ params }: { params: Promise<{ attemp
                   <div className="flex items-start gap-2">
                     <span className="text-muted-foreground text-sm mt-0.5 shrink-0">{i + 1}.</span>
                     <div className="flex-1">
-                      <CardTitle className="text-sm font-medium leading-snug">{q.text}</CardTitle>
+                      <CardTitle className="text-sm font-medium leading-snug"><MathText text={q.text} /></CardTitle>
                       <p className="text-xs text-muted-foreground mt-0.5">{q.points} б.</p>
                     </div>
                     <span className={`text-xs font-semibold shrink-0 ${q.is_correct ? "text-green-600" : "text-destructive"}`}>
@@ -116,7 +117,7 @@ export default function AttemptReviewPage({ params }: { params: Promise<{ attemp
                           ? "bg-green-50 text-green-700"
                           : "text-muted-foreground"
                       }`}>
-                        {opt.text}
+                        <MathText text={opt.text} />
                         {opt.chosen && !opt.is_correct && " — ваш ответ"}
                         {opt.is_correct && !opt.chosen && " — правильный ответ"}
                       </div>
