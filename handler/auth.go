@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -122,6 +123,7 @@ func (h *AuthHandler) SendOTP(c *gin.Context) {
 	}
 
 	if err := h.notifier.SendOTP(c.Request.Context(), req.Email, 0, code); err != nil {
+		log.Printf("[OTP] send error for %s: %v", req.Email, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Не удалось отправить код. Попробуйте позже."})
 		return
 	}
