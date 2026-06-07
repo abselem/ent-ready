@@ -67,6 +67,11 @@ export default function StudentLessonPage() {
     enabled: !!lessonId,
   });
 
+  // Record unique view once per lesson per user
+  useEffect(() => {
+    if (lessonId) api.post(`/lessons/${lessonId}/view`).catch(() => {});
+  }, [lessonId]);
+
   const sections = groupBySections(groupLessons);
 
   // Global lesson index for number display

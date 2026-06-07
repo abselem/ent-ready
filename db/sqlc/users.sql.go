@@ -21,13 +21,14 @@ func (q *Queries) BanUser(ctx context.Context, id int32) error {
 }
 
 const createUser = `-- name: CreateUser :one
-INSERT INTO users (phone, first_name, last_name, middle_name, city, role_id)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, phone, first_name, last_name, middle_name, city, role_id, password_hash, telegram_chat_id, is_banned, created_at, updated_at, profile_subject1, profile_subject2, avatar_url
+INSERT INTO users (phone, email, first_name, last_name, middle_name, city, role_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, phone, email, first_name, last_name, middle_name, city, role_id, password_hash, telegram_chat_id, is_banned, created_at, updated_at, profile_subject1, profile_subject2, avatar_url
 `
 
 type CreateUserParams struct {
-	Phone      string      `json:"phone"`
+	Phone      pgtype.Text `json:"phone"`
+	Email      pgtype.Text `json:"email"`
 	FirstName  string      `json:"first_name"`
 	LastName   string      `json:"last_name"`
 	MiddleName pgtype.Text `json:"middle_name"`
@@ -38,6 +39,7 @@ type CreateUserParams struct {
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
 	row := q.db.QueryRow(ctx, createUser,
 		arg.Phone,
+		arg.Email,
 		arg.FirstName,
 		arg.LastName,
 		arg.MiddleName,
@@ -48,6 +50,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 	err := row.Scan(
 		&i.ID,
 		&i.Phone,
+		&i.Email,
 		&i.FirstName,
 		&i.LastName,
 		&i.MiddleName,
@@ -66,7 +69,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, phone, first_name, last_name, middle_name, city, role_id, password_hash, telegram_chat_id, is_banned, created_at, updated_at, profile_subject1, profile_subject2, avatar_url FROM users WHERE id = $1
+SELECT id, phone, email, first_name, last_name, middle_name, city, role_id, password_hash, telegram_chat_id, is_banned, created_at, updated_at, profile_subject1, profile_subject2, avatar_url FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id int32) (User, error) {
@@ -75,6 +78,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id int32) (User, error) {
 	err := row.Scan(
 		&i.ID,
 		&i.Phone,
+		&i.Email,
 		&i.FirstName,
 		&i.LastName,
 		&i.MiddleName,
@@ -93,7 +97,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id int32) (User, error) {
 }
 
 const getUserByPhone = `-- name: GetUserByPhone :one
-SELECT id, phone, first_name, last_name, middle_name, city, role_id, password_hash, telegram_chat_id, is_banned, created_at, updated_at, profile_subject1, profile_subject2, avatar_url FROM users WHERE phone = $1
+SELECT id, phone, email, first_name, last_name, middle_name, city, role_id, password_hash, telegram_chat_id, is_banned, created_at, updated_at, profile_subject1, profile_subject2, avatar_url FROM users WHERE phone = $1
 `
 
 func (q *Queries) GetUserByPhone(ctx context.Context, phone string) (User, error) {
@@ -102,6 +106,7 @@ func (q *Queries) GetUserByPhone(ctx context.Context, phone string) (User, error
 	err := row.Scan(
 		&i.ID,
 		&i.Phone,
+		&i.Email,
 		&i.FirstName,
 		&i.LastName,
 		&i.MiddleName,
@@ -175,7 +180,7 @@ UPDATE users
 SET first_name = $2, last_name = $3, middle_name = $4, city = $5,
     profile_subject1 = $6, profile_subject2 = $7
 WHERE id = $1
-RETURNING id, phone, first_name, last_name, middle_name, city, role_id, password_hash, telegram_chat_id, is_banned, created_at, updated_at, profile_subject1, profile_subject2, avatar_url
+RETURNING id, phone, email, first_name, last_name, middle_name, city, role_id, password_hash, telegram_chat_id, is_banned, created_at, updated_at, profile_subject1, profile_subject2, avatar_url
 `
 
 type UpdateUserProfileParams struct {
@@ -202,6 +207,7 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 	err := row.Scan(
 		&i.ID,
 		&i.Phone,
+		&i.Email,
 		&i.FirstName,
 		&i.LastName,
 		&i.MiddleName,

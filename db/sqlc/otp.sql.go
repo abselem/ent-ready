@@ -14,11 +14,11 @@ import (
 const createOTPCode = `-- name: CreateOTPCode :one
 INSERT INTO otp_codes (phone, code, purpose, expires_at)
 VALUES ($1, $2, $3, $4)
-RETURNING id, phone, code, purpose, attempts, is_used, expires_at, created_at
+RETURNING id, phone, email, code, purpose, attempts, is_used, expires_at, created_at
 `
 
 type CreateOTPCodeParams struct {
-	Phone     string             `json:"phone"`
+	Phone     pgtype.Text        `json:"phone"`
 	Code      string             `json:"code"`
 	Purpose   string             `json:"purpose"`
 	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
@@ -35,6 +35,7 @@ func (q *Queries) CreateOTPCode(ctx context.Context, arg CreateOTPCodeParams) (O
 	err := row.Scan(
 		&i.ID,
 		&i.Phone,
+		&i.Email,
 		&i.Code,
 		&i.Purpose,
 		&i.Attempts,
@@ -55,7 +56,7 @@ func (q *Queries) DeleteExpiredOTPCodes(ctx context.Context) error {
 }
 
 const getActiveOTPCode = `-- name: GetActiveOTPCode :one
-SELECT id, phone, code, purpose, attempts, is_used, expires_at, created_at FROM otp_codes
+SELECT id, phone, email, code, purpose, attempts, is_used, expires_at, created_at FROM otp_codes
 WHERE phone = $1
   AND purpose = $2
   AND is_used = FALSE
@@ -65,8 +66,8 @@ LIMIT 1
 `
 
 type GetActiveOTPCodeParams struct {
-	Phone   string `json:"phone"`
-	Purpose string `json:"purpose"`
+	Phone   pgtype.Text `json:"phone"`
+	Purpose string      `json:"purpose"`
 }
 
 func (q *Queries) GetActiveOTPCode(ctx context.Context, arg GetActiveOTPCodeParams) (OtpCode, error) {
@@ -75,6 +76,7 @@ func (q *Queries) GetActiveOTPCode(ctx context.Context, arg GetActiveOTPCodePara
 	err := row.Scan(
 		&i.ID,
 		&i.Phone,
+		&i.Email,
 		&i.Code,
 		&i.Purpose,
 		&i.Attempts,

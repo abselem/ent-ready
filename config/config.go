@@ -12,12 +12,21 @@ import (
 type Config struct {
 	DB                  DBConfig
 	JWT                 JWTConfig
+	SMTP                SMTPConfig
 	ServerAddr          string
 	TelegramBotToken    string
 	TelegramBotUsername string
 	TelegramWebhookURL  string
 	CORSOrigins         []string
 	OTPEnabled          bool
+}
+
+type SMTPConfig struct {
+	Host     string
+	Port     string
+	Username string
+	Password string
+	From     string
 }
 
 type DBConfig struct {
@@ -71,6 +80,13 @@ func Load() (*Config, error) {
 			RefreshSecret: getEnv("JWT_REFRESH_SECRET", "change_me_refresh"),
 			AccessTTL:     15 * time.Minute,
 			RefreshTTL:    7 * 24 * time.Hour,
+		},
+		SMTP: SMTPConfig{
+			Host:     getEnv("SMTP_HOST", ""),
+			Port:     getEnv("SMTP_PORT", "587"),
+			Username: getEnv("SMTP_USERNAME", ""),
+			Password: getEnv("SMTP_PASSWORD", ""),
+			From:     getEnv("SMTP_FROM", ""),
 		},
 		ServerAddr:          serverAddr,
 		TelegramBotToken:    getEnv("TELEGRAM_BOT_TOKEN", ""),

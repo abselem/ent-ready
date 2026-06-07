@@ -5,158 +5,154 @@ import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 
-interface Group {
-  id: number;
-  name: string;
-  category: string; // platform | course | school
-}
-
 interface Lesson {
   id: number;
   title: string;
-  description: { String: string; Valid: boolean } | null;
+  description: string;
   scheduled_at: string | null;
   duration_min: number;
-  group_id: number;
+  group_id: number | null;
+  group_name: string;
+  group_category: string;
   section_title: string | null;
-  section_num: number;
-  order_num: number;
+  visibility: string;
+  view_count: number;
+  topic_id: number | null;
+  topic_name: string;
+  subtopic_id: number | null;
+  subtopic_name: string;
 }
 
-type Segment = "all" | "platform" | "course" | "school";
+const subjectConfig: Record<string, { symbol: string; color: string }> = {
+  "Математика":               { symbol: "∑",  color: "#3b82f6" },
+  "Физика":                   { symbol: "⚛",  color: "#8b5cf6" },
+  "Химия":                    { symbol: "⚗",  color: "#10b981" },
+  "Биология":                 { symbol: "🧬", color: "#059669" },
+  "География":                { symbol: "🌍", color: "#0891b2" },
+  "Информатика":              { symbol: "⌨",  color: "#6366f1" },
+  "Всемирная история":        { symbol: "📜", color: "#f59e0b" },
+  "Основы права и экономики": { symbol: "⚖",  color: "#64748b" },
+  "Английский язык":          { symbol: "EN", color: "#0369a1" },
+  "Французский язык":         { symbol: "FR", color: "#dc2626" },
+  "Немецкий язык":            { symbol: "DE", color: "#ca8a04" },
+  "Казахская литература":     { symbol: "Қ",  color: "#b45309" },
+  "Русская литература":       { symbol: "Р",  color: "#be185d" },
+};
 
-const SEGMENTS: { value: Segment; label: string; icon: string }[] = [
-  { value: "all",      label: "Все",      icon: "◈" },
-  { value: "platform", label: "От нас",   icon: "✦" },
-  { value: "course",   label: "Курсы",    icon: "◎" },
-  { value: "school",   label: "Школа",    icon: "◻" },
-];
+function subjectCfg(name: string) {
+  return subjectConfig[name] ?? { symbol: name.slice(0, 2).toUpperCase(), color: "#64748b" };
+}
 
 export default function StudentLessonsPage() {
   const router = useRouter();
-  const [segment, setSegment] = useState<Segment>("all");
-
-  const { data: groups = [] } = useQuery<Group[]>({
-    queryKey: ["joined-groups-lessons"],
-    queryFn: async () => (await api.get("/groups/joined")).data,
-  });
+  const [search, setSearch] = useState("");
 
   const { data: lessons = [], isLoading } = useQuery<Lesson[]>({
-    queryKey: ["student-lessons", groups.map(g => g.id)],
-    queryFn: async () => {
-      const all = await Promise.all(
-        groups.map(g => api.get(`/groups/${g.id}/lessons`).then(r => (r.data ?? []) as Lesson[]))
-      );
-      return all.flat();
-    },
-    enabled: groups.length > 0,
+    queryKey: ["student-lessons-available"],
+    queryFn: async () => (await api.get("/lessons/available")).data,
   });
 
-  // Filter by segment
-  const groupById = Object.fromEntries(groups.map(g => [g.id, g]));
-  const filtered = segment === "all"
-    ? lessons
-    : lessons.filter(l => groupById[l.group_id]?.category === segment);
+  const filtered = lessons.filter(l =>
+    l.title.toLowerCase().includes(search.toLowerCase()) ||
+    l.topic_name.toLowerCase().includes(search.toLowerCase())
+  );
 
-  // Count per segment for badges
-  const counts = {
-    all:      lessons.length,
-    platform: lessons.filter(l => groupById[l.group_id]?.category === "platform").length,
-    course:   lessons.filter(l => groupById[l.group_id]?.category === "course").length,
-    school:   lessons.filter(l => groupById[l.group_id]?.category === "school").length,
-  };
+  const grouped = filtered.reduce((acc: Record<string, Lesson[]>, l) => {
+    const key = l.topic_name || "Без предмета";
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(l);
+    return acc;
+  }, {});
+
+  const topicOrder = Object.keys(subjectConfig);
+  const sortedTopics = Object.keys(grouped).sort((a, b) => {
+    const aIdx = topicOrder.indexOf(a);
+    const bIdx = topicOrder.indexOf(b);
+    if (aIdx === -1 && bIdx === -1) return a.localeCompare(b);
+    if (aIdx === -1) return 1;
+    if (bIdx === -1) return -1;
+    return aIdx - bIdx;
+  });
 
   function formatDate(iso: string | null) {
     if (!iso) return null;
-    return new Date(iso).toLocaleString("ru-RU", {
+    return new Date(iso).toLocaleDateString("ru-RU", {
       day: "2-digit", month: "long", year: "numeric",
-      hour: "2-digit", minute: "2-digit",
     });
   }
 
   return (
-    <div className="p-4 md:p-6 max-w-2xl mx-auto">
+    <div className="p-4 md:p-6 max-w-3xl mx-auto">
       <h1 className="text-2xl font-bold mb-5">Уроки</h1>
 
-      {/* Segment control */}
-      <div className="flex rounded-2xl border border-border bg-muted/30 p-1 mb-5 gap-1">
-        {SEGMENTS.filter(s => s.value === "all" || counts[s.value] > 0).map(s => (
-          <button
-            key={s.value}
-            onClick={() => setSegment(s.value)}
-            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-medium transition-all ${
-              segment === s.value
-                ? "bg-card shadow-sm text-foreground"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <span className="text-base leading-none">{s.icon}</span>
-            <span>{s.label}</span>
-            {counts[s.value] > 0 && (
-              <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
-                segment === s.value ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
-              }`}>
-                {counts[s.value]}
-              </span>
-            )}
-          </button>
-        ))}
+      {/* Search */}
+      <div className="relative mb-6">
+        <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+        </svg>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Поиск по названию или предмету..."
+          className="w-full border border-border rounded-xl pl-9 pr-4 py-2.5 bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+        />
       </div>
 
-      {/* Lessons list */}
+      {/* Loading */}
       {isLoading ? (
         <div className="flex flex-col gap-3">
           {[1, 2, 3].map(i => <div key={i} className="h-20 bg-muted/30 rounded-xl animate-pulse" />)}
         </div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">
-          {lessons.length === 0
-            ? "Нет доступных уроков"
-            : "Нет уроков в этом разделе"}
+          {lessons.length === 0 ? "Нет доступных уроков" : "Уроки не найдены"}
         </div>
       ) : (
-        <div className="flex flex-col gap-3">
-          {filtered.map((lesson, idx) => {
-            const group = groupById[lesson.group_id];
-            const catLabel = group?.category === "platform" ? "От нас"
-              : group?.category === "course" ? "Курс" : "Школа";
-            const catColor = group?.category === "platform"
-              ? "bg-purple-500/10 text-purple-400"
-              : group?.category === "course"
-              ? "bg-blue-500/10 text-blue-400"
-              : "bg-green-500/10 text-green-400";
-
+        <div className="flex flex-col gap-6">
+          {sortedTopics.map((topicName) => {
+            const cfg = subjectCfg(topicName);
             return (
-              <button
-                key={lesson.id}
-                onClick={() => router.push(`/student/lessons/${lesson.id}`)}
-                className="text-left w-full border border-border rounded-2xl p-4 bg-card hover:border-primary transition-colors active:scale-[0.99] flex items-center gap-4"
-              >
-                <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary font-bold text-sm shrink-0">
-                  {idx + 1}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-0.5">
-                    {segment === "all" && (
-                      <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full ${catColor}`}>
-                        {catLabel}
-                      </span>
-                    )}
-                    {lesson.section_title && (
-                      <span className="text-xs text-muted-foreground truncate">{lesson.section_title}</span>
-                    )}
+              <div key={topicName}>
+                <div className="flex items-center gap-2.5 mb-3">
+                  <div
+                    className="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold text-white shrink-0"
+                    style={{ backgroundColor: cfg.color }}
+                  >
+                    {cfg.symbol}
                   </div>
-                  <p className="font-medium text-sm leading-snug truncate">{lesson.title}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {group?.name}
-                    {lesson.scheduled_at && ` · ${formatDate(lesson.scheduled_at)}`}
-                    {lesson.duration_min > 0 && ` · ${lesson.duration_min} мин`}
-                  </p>
+                  <h2 className="text-sm font-semibold text-foreground">{topicName}</h2>
+                  <span className="text-xs px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">
+                    {grouped[topicName].length}
+                  </span>
                 </div>
-                <svg className="w-4 h-4 text-muted-foreground shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="m9 18 6-6-6-6"/>
-                </svg>
-              </button>
+                <div className="flex flex-col gap-2">
+                  {grouped[topicName].map((lesson, idx) => (
+                    <button
+                      key={lesson.id}
+                      onClick={() => router.push(`/student/lessons/${lesson.id}`)}
+                      className="text-left w-full border border-border rounded-xl p-3 bg-card hover:border-primary transition-colors flex items-center gap-3"
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary text-xs font-bold shrink-0">
+                        {idx + 1}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium leading-snug truncate">{lesson.title}</p>
+                        {lesson.subtopic_name && (
+                          <p className="text-xs text-muted-foreground truncate">{lesson.subtopic_name}</p>
+                        )}
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {lesson.group_name || "Публичный"}
+                          {lesson.scheduled_at && ` · ${formatDate(lesson.scheduled_at)}`}
+                          {lesson.duration_min > 0 && ` · ${lesson.duration_min} мин`}
+                        </p>
+                      </div>
+                      <svg className="w-4 h-4 text-muted-foreground shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="m9 18 6-6-6-6"/>
+                      </svg>
+                    </button>
+                  ))}
+                </div>
+              </div>
             );
           })}
         </div>

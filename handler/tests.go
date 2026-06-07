@@ -14,11 +14,12 @@ import (
 )
 
 type TestHandler struct {
-	q db.Querier
+	q    db.Querier
+	pool *pgxpool.Pool
 }
 
 func NewTestHandler(pool *pgxpool.Pool, _ *config.Config) *TestHandler {
-	return &TestHandler{q: db.New(pool)}
+	return &TestHandler{q: db.New(pool), pool: pool}
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -195,13 +196,21 @@ func (h *TestHandler) DeleteTest(c *gin.Context) {
 
 // POST /api/v1/tests/:id/questions
 type createQuestionReq struct {
-	Text        string  `json:"text" binding:"required"`
-	OrderNum    int16   `json:"order_num"`
-	Points      int16   `json:"points"`
-	TopicID     *int32  `json:"topic_id"`
-	SubtopicID  *int32  `json:"subtopic_id"`
-	Explanation *string `json:"explanation"`
-	Difficulty  int16   `json:"difficulty"` // 1=легкий 2=средний 3=сложный
+	Text                 string  `json:"text" binding:"required"`
+	OrderNum             int16   `json:"order_num"`
+	Points               int16   `json:"points"`
+	TopicID              *int32  `json:"topic_id"`
+	SubtopicID           *int32  `json:"subtopic_id"`
+	Explanation          *string `json:"explanation"`
+	ExplanationImageUrl  *string `json:"explanation_image_url"`
+	Difficulty           int16   `json:"difficulty"`
+	ImageUrl             *string `json:"image_url"`
+	QuestionType         string  `json:"question_type"` // single | multi | matching
+	Options              []struct {
+		Text      string `json:"text"`
+		IsCorrect bool   `json:"is_correct"`
+		MatchText string `json:"match_text"` // for matching type
+	} `json:"options"`
 }
 
 // POST /api/v1/tests/:id/questions — создать вопрос в банке и добавить в тест
@@ -270,39 +279,283 @@ func (h *TestHandler) CreateBankQuestion(c *gin.Context) {
 	if bdiff < 1 || bdiff > 3 {
 		bdiff = 1
 	}
-	params := db.CreateQuestionParams{
-		Text:       req.Text,
-		OrderNum:   req.OrderNum,
-		Points:     req.Points,
-		OwnerID:    pgtype.Int4{Int32: userID.(int32), Valid: true},
-		Difficulty: bdiff,
+
+	qtype := req.QuestionType
+	if qtype != "multi" && qtype != "matching" {
+		qtype = "single"
 	}
-	if req.TopicID != nil {
-		params.TopicID = pgtype.Int4{Int32: *req.TopicID, Valid: true}
+	nilStr := func(s *string) *string {
+		if s == nil || *s == "" {
+			return nil
+		}
+		return s
 	}
-	if req.SubtopicID != nil {
-		params.SubtopicID = pgtype.Int4{Int32: *req.SubtopicID, Valid: true}
-	}
-	if req.Explanation != nil && *req.Explanation != "" {
-		params.Explanation = pgtype.Text{String: *req.Explanation, Valid: true}
-	}
-	q, err := h.q.CreateQuestion(ctx, params)
+
+	var qID int32
+	err := h.pool.QueryRow(ctx, `
+		INSERT INTO questions (text, points, difficulty, owner_id, topic_id, subtopic_id,
+		                       explanation, explanation_image_url, image_url, question_type, order_num)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0)
+		RETURNING id
+	`, req.Text, req.Points, bdiff, userID.(int32),
+		req.TopicID, req.SubtopicID,
+		nilStr(req.Explanation), nilStr(req.ExplanationImageUrl),
+		nilStr(req.ImageUrl), qtype,
+	).Scan(&qID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
-	c.JSON(http.StatusCreated, q)
+
+	for i, opt := range req.Options {
+		if opt.Text == "" {
+			continue
+		}
+		var mt *string
+		if opt.MatchText != "" {
+			mt = &opt.MatchText
+		}
+		h.pool.Exec(ctx,
+			`INSERT INTO answer_options (question_id, text, is_correct, order_num, match_text)
+			 VALUES ($1,$2,$3,$4,$5)`,
+			qID, opt.Text, opt.IsCorrect, int16(i), mt,
+		)
+	}
+
+	type optRow struct {
+		ID        int32   `json:"id"`
+		Text      string  `json:"text"`
+		IsCorrect bool    `json:"is_correct"`
+		MatchText *string `json:"match_text,omitempty"`
+	}
+	type qResp struct {
+		ID           int32    `json:"id"`
+		Text         string   `json:"text"`
+		QuestionType string   `json:"question_type"`
+		Difficulty   int16    `json:"difficulty"`
+		ImageUrl     *string  `json:"image_url"`
+		Options      []optRow `json:"options"`
+	}
+	resp := qResp{ID: qID, Text: req.Text, QuestionType: qtype, Difficulty: bdiff, ImageUrl: nilStr(req.ImageUrl)}
+	rows, _ := h.pool.Query(ctx,
+		`SELECT id, text, is_correct, match_text FROM answer_options WHERE question_id=$1 ORDER BY order_num`, qID)
+	if rows != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var o optRow
+			rows.Scan(&o.ID, &o.Text, &o.IsCorrect, &o.MatchText)
+			resp.Options = append(resp.Options, o)
+		}
+	}
+	c.JSON(http.StatusCreated, resp)
 }
 
-// GET /api/v1/questions/mine — банк вопросов учителя
+// GET /api/v1/questions/mine — банк вопросов учителя (без контекстных вопросов)
 func (h *TestHandler) ListMyQuestions(c *gin.Context) {
+	ctx := context.Background()
 	userID, _ := c.Get("user_id")
-	rows, err := h.q.GetMyQuestions(context.Background(), pgtype.Int4{Int32: userID.(int32), Valid: true})
+	uid := userID.(int32)
+
+	type qRow struct {
+		ID                  int32   `json:"id"`
+		Text                string  `json:"text"`
+		Difficulty          int16   `json:"difficulty"`
+		QuestionType        string  `json:"question_type"`
+		Explanation         *string `json:"explanation"`
+		ImageUrl            *string `json:"image_url"`
+		ExplanationImageUrl *string `json:"explanation_image_url"`
+		TopicID             *int32  `json:"topic_id"`
+		SubtopicID          *int32  `json:"subtopic_id"`
+		TopicName           *string `json:"topic_name"`
+		SubtopicName        *string `json:"subtopic_name"`
+	}
+
+	rows, err := h.pool.Query(ctx, `
+		SELECT q.id, q.text, q.difficulty, q.question_type,
+		       q.explanation, q.image_url, q.explanation_image_url,
+		       q.topic_id, q.subtopic_id,
+		       t.name AS topic_name, s.name AS subtopic_name
+		FROM questions q
+		LEFT JOIN topics t ON t.id = q.topic_id
+		LEFT JOIN subtopics s ON s.id = q.subtopic_id
+		WHERE q.owner_id = $1 AND q.context_id IS NULL
+		ORDER BY q.created_at DESC
+	`, uid)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
-	c.JSON(http.StatusOK, rows)
+	defer rows.Close()
+
+	result := []qRow{}
+	for rows.Next() {
+		var r qRow
+		rows.Scan(&r.ID, &r.Text, &r.Difficulty, &r.QuestionType,
+			&r.Explanation, &r.ImageUrl, &r.ExplanationImageUrl,
+			&r.TopicID, &r.SubtopicID, &r.TopicName, &r.SubtopicName)
+		result = append(result, r)
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+// POST /api/v1/question-contexts — создать контекстный блок с вопросами
+type contextSubQReq struct {
+	Text         string `json:"text"`
+	QuestionType string `json:"question_type"`
+	Difficulty   int16  `json:"difficulty"`
+	ImageUrl     *string `json:"image_url"`
+	Options      []struct {
+		Text      string `json:"text"`
+		IsCorrect bool   `json:"is_correct"`
+	} `json:"options"`
+}
+
+type createContextReq struct {
+	Title      string           `json:"title"`
+	Body       string           `json:"body" binding:"required"`
+	ImageUrl   *string          `json:"image_url"`
+	TopicID    *int32           `json:"topic_id"`
+	SubtopicID *int32           `json:"subtopic_id"`
+	Questions  []contextSubQReq `json:"questions"`
+}
+
+func (h *TestHandler) CreateContextQuestions(c *gin.Context) {
+	ctx := context.Background()
+	userID, _ := c.Get("user_id")
+	uid := userID.(int32)
+
+	var req createContextReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(req.Questions) == 0 || len(req.Questions) > 5 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "1 to 5 questions required"})
+		return
+	}
+
+	nilStr := func(s *string) *string {
+		if s == nil || *s == "" {
+			return nil
+		}
+		return s
+	}
+	titlePtr := func() *string {
+		if req.Title == "" {
+			return nil
+		}
+		s := req.Title
+		return &s
+	}
+
+	var contextID int32
+	err := h.pool.QueryRow(ctx, `
+		INSERT INTO question_contexts (title, body, image_url, topic_id, subtopic_id, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
+	`, titlePtr(), req.Body, nilStr(req.ImageUrl), req.TopicID, req.SubtopicID, uid).Scan(&contextID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+
+	type qResp struct {
+		ID   int32  `json:"id"`
+		Text string `json:"text"`
+	}
+	created := []qResp{}
+	for i, sq := range req.Questions {
+		if sq.Text == "" {
+			continue
+		}
+		qtype := sq.QuestionType
+		if qtype != "multi" {
+			qtype = "single"
+		}
+		diff := sq.Difficulty
+		if diff < 1 || diff > 3 {
+			diff = 1
+		}
+
+		var qID int32
+		err := h.pool.QueryRow(ctx, `
+			INSERT INTO questions (text, points, difficulty, owner_id, topic_id, subtopic_id,
+			                       image_url, question_type, context_id, order_num)
+			VALUES ($1, 1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id
+		`, sq.Text, diff, uid, req.TopicID, req.SubtopicID,
+			nilStr(sq.ImageUrl), qtype, contextID, int16(i),
+		).Scan(&qID)
+		if err != nil {
+			continue
+		}
+
+		for j, opt := range sq.Options {
+			if opt.Text == "" {
+				continue
+			}
+			h.pool.Exec(ctx,
+				`INSERT INTO answer_options (question_id, text, is_correct, order_num) VALUES ($1,$2,$3,$4)`,
+				qID, opt.Text, opt.IsCorrect, int16(j),
+			)
+		}
+		created = append(created, qResp{ID: qID, Text: sq.Text})
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"context_id": contextID, "questions": created})
+}
+
+// GET /api/v1/question-contexts/mine — контекстные блоки учителя
+func (h *TestHandler) ListMyContexts(c *gin.Context) {
+	ctx := context.Background()
+	userID, _ := c.Get("user_id")
+	uid := userID.(int32)
+
+	type ctxRow struct {
+		ID            int32   `json:"id"`
+		Title         *string `json:"title"`
+		Body          string  `json:"body"`
+		ImageUrl      *string `json:"image_url"`
+		TopicID       *int32  `json:"topic_id"`
+		TopicName     *string `json:"topic_name"`
+		SubtopicName  *string `json:"subtopic_name"`
+		QuestionCount int     `json:"question_count"`
+	}
+
+	rows, err := h.pool.Query(ctx, `
+		SELECT qc.id, qc.title, qc.body, qc.image_url, qc.topic_id,
+		       t.name AS topic_name, s.name AS subtopic_name,
+		       COUNT(q.id)::INT AS question_count
+		FROM question_contexts qc
+		LEFT JOIN topics t ON t.id = qc.topic_id
+		LEFT JOIN subtopics s ON s.id = qc.subtopic_id
+		LEFT JOIN questions q ON q.context_id = qc.id
+		WHERE qc.created_by = $1
+		GROUP BY qc.id, t.name, s.name
+		ORDER BY qc.created_at DESC
+	`, uid)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	defer rows.Close()
+
+	result := []ctxRow{}
+	for rows.Next() {
+		var r ctxRow
+		rows.Scan(&r.ID, &r.Title, &r.Body, &r.ImageUrl, &r.TopicID,
+			&r.TopicName, &r.SubtopicName, &r.QuestionCount)
+		result = append(result, r)
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+// DELETE /api/v1/question-contexts/:id
+func (h *TestHandler) DeleteContext(c *gin.Context) {
+	id, err := parseID(c, "id")
+	if err != nil {
+		return
+	}
+	h.pool.Exec(context.Background(), `DELETE FROM question_contexts WHERE id = $1`, id)
+	c.Status(http.StatusNoContent)
 }
 
 // POST /api/v1/tests/:id/questions/link — добавить существующий вопрос из банка

@@ -12,7 +12,10 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 interface Topic { id: number; name: string }
 interface Group { id: number; name: string; city: string; school: string; invite_code: string }
 interface UserFull {
-  id: number; phone: string; first_name: string; last_name: string;
+  id: number;
+  phone: { String: string; Valid: boolean } | null;
+  email: { String: string; Valid: boolean } | null;
+  first_name: string; last_name: string;
   profile_subject1: number | null; profile_subject2: number | null;
   avatar_url: { String: string; Valid: boolean } | null;
 }
@@ -31,10 +34,9 @@ const COL  = CELL + GAP; // 14px per week column
 
 function cellColor(count: number) {
   if (count === 0)  return "#2d3748"; // visible empty cell
-  if (count === 1)  return "#14532d";
-  if (count <= 3)   return "#166534";
-  if (count <= 6)   return "#15803d";
-  return              "#22c55e";
+  if (count <= 5)   return "#86efac"; // soft green
+  if (count <= 10)  return "#22c55e"; // medium green
+  return              "#15803d";      // dark green
 }
 
 const MONTH_NAMES = ["янв","февр","март","апр","май","июнь","июль","авг","сент","окт","нояб","дек"];
@@ -137,6 +139,8 @@ export default function StudentProfilePage() {
 
   const [firstName, setFirstName] = useState(user?.first_name ?? "");
   const [lastName, setLastName] = useState(user?.last_name ?? "");
+  const [phone, setPhone] = useState("");
+  const [phoneSaved, setPhoneSaved] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
@@ -170,8 +174,22 @@ export default function StudentProfilePage() {
     if (meFull) {
       setSub1(meFull.profile_subject1 ?? "");
       setSub2(meFull.profile_subject2 ?? "");
+      setPhone(meFull.phone?.Valid ? meFull.phone.String : "");
     }
   }, [meFull]);
+
+  const phoneValue = meFull?.phone?.Valid ? meFull.phone.String : "";
+  const emailValue = meFull?.email?.Valid ? meFull.email.String : "";
+  const hasPhone = !!phoneValue;
+
+  const updatePhone = useMutation({
+    mutationFn: () => api.put("/users/me/phone", { phone }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["me-full"] });
+      setPhoneSaved(true); setTimeout(() => setPhoneSaved(false), 2000);
+    },
+    onError: () => setError("Не удалось сохранить телефон"),
+  });
 
   const avatarSrc = (() => {
     const raw = meFull?.avatar_url?.Valid ? meFull.avatar_url.String : null;
@@ -268,12 +286,15 @@ export default function StudentProfilePage() {
               </div>
               <div className="text-sm text-muted-foreground">
                 <p className="font-medium text-foreground">{user?.first_name} {user?.last_name}</p>
-                <p className="text-xs mt-0.5">{user?.phone}</p>
+                {emailValue && <p className="text-xs mt-0.5">{emailValue}</p>}
+                {phoneValue && <p className="text-xs mt-0.5">{phoneValue}</p>}
                 <p className="text-xs mt-1">JPG, PNG, WebP · макс. 10 МБ</p>
               </div>
             </div>
 
-            <Input id="phone" label="Телефон" value={user?.phone ?? ""} disabled />
+            {emailValue && (
+              <Input id="email" label="Email" value={emailValue} disabled />
+            )}
             <Input id="firstName" label="Имя" value={firstName} onChange={(e) => setFirstName(e.target.value)} />
             <Input id="lastName" label="Фамилия" value={lastName} onChange={(e) => setLastName(e.target.value)} />
 
@@ -297,6 +318,40 @@ export default function StudentProfilePage() {
                 </optgroup>
               </select>
             </div>
+
+            {/* Phone — prompted to add if missing */}
+            {!hasPhone ? (
+              <div className="border border-yellow-500/30 bg-yellow-500/5 rounded-xl p-3">
+                <p className="text-xs font-medium text-yellow-400 mb-2">📱 Укажите номер телефона</p>
+                <div className="flex gap-2">
+                  <input
+                    type="tel" placeholder="+7 777 000 00 00"
+                    value={phone} onChange={e => setPhone(e.target.value)}
+                    className="flex-1 border border-border rounded-lg px-3 py-1.5 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                  <button
+                    onClick={() => updatePhone.mutate()}
+                    disabled={!phone.trim() || updatePhone.isPending}
+                    className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                  >
+                    {updatePhone.isPending ? "..." : "Сохранить"}
+                  </button>
+                </div>
+                {phoneSaved && <p className="text-xs text-green-500 mt-1">Телефон сохранён!</p>}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <Input id="phone" label="Телефон" value={phone}
+                  onChange={e => setPhone(e.target.value)} />
+                <button
+                  onClick={() => updatePhone.mutate()}
+                  disabled={phone === phoneValue || !phone.trim() || updatePhone.isPending}
+                  className="mt-5 px-3 py-2 text-sm border border-border rounded-xl hover:bg-muted disabled:opacity-40 transition-colors shrink-0"
+                >
+                  {phoneSaved ? "✓" : "Сохр."}
+                </button>
+              </div>
+            )}
 
             {error && <p className="text-sm text-destructive">{error}</p>}
             {saved && <p className="text-sm text-green-600">Сохранено!</p>}

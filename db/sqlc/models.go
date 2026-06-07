@@ -65,19 +65,27 @@ type Group struct {
 }
 
 type Lesson struct {
-	ID          int32              `json:"id"`
-	GroupID     int32              `json:"group_id"`
-	Title       string             `json:"title"`
-	Description pgtype.Text        `json:"description"`
-	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
-	DurationMin int16              `json:"duration_min"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	ID           int32              `json:"id"`
+	GroupID      pgtype.Int4        `json:"group_id"`
+	Title        string             `json:"title"`
+	Description  pgtype.Text        `json:"description"`
+	ScheduledAt  pgtype.Timestamptz `json:"scheduled_at"`
+	DurationMin  int16              `json:"duration_min"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	SectionTitle pgtype.Text        `json:"section_title"`
+	SectionNum   int16              `json:"section_num"`
+	OrderNum     int16              `json:"order_num"`
+	IsPublished  bool               `json:"is_published"`
+	Visibility   string             `json:"visibility"`
+	ViewCount    int32              `json:"view_count"`
+	CreatedBy    pgtype.Int4        `json:"created_by"`
 }
 
 type OtpCode struct {
 	ID        int32              `json:"id"`
-	Phone     string             `json:"phone"`
+	Phone     pgtype.Text        `json:"phone"`
+	Email     pgtype.Text        `json:"email"`
 	Code      string             `json:"code"`
 	Purpose   string             `json:"purpose"`
 	Attempts  int16              `json:"attempts"`
@@ -179,7 +187,8 @@ type Topic struct {
 
 type User struct {
 	ID              int32              `json:"id"`
-	Phone           string             `json:"phone"`
+	Phone           pgtype.Text        `json:"phone"`
+	Email           pgtype.Text        `json:"email"`
 	FirstName       string             `json:"first_name"`
 	LastName        string             `json:"last_name"`
 	MiddleName      pgtype.Text        `json:"middle_name"`

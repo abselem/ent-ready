@@ -22,6 +22,10 @@ frontend/node_modules/
 frontend/.next/
 frontend/.env.local
 
+# User uploads (persisted via Docker volume in production)
+static/uploads/*
+!static/uploads/.gitkeep
+
 # OS
 .DS_Store
 Thumbs.db

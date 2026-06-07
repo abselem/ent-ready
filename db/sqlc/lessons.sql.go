@@ -11,40 +11,47 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const AllLessonCols = `id, group_id, title, description, scheduled_at, duration_min,
+	created_at, updated_at, section_title, section_num, order_num,
+	is_published, visibility, view_count, created_by`
+
+func scanLesson(row interface{ Scan(...any) error }) (Lesson, error) {
+	var i Lesson
+	err := row.Scan(
+		&i.ID, &i.GroupID, &i.Title, &i.Description,
+		&i.ScheduledAt, &i.DurationMin, &i.CreatedAt, &i.UpdatedAt,
+		&i.SectionTitle, &i.SectionNum, &i.OrderNum,
+		&i.IsPublished, &i.Visibility, &i.ViewCount, &i.CreatedBy,
+	)
+	return i, err
+}
+
 const createLesson = `-- name: CreateLesson :one
-INSERT INTO lessons (group_id, title, description, scheduled_at, duration_min)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, group_id, title, description, scheduled_at, duration_min, created_at, updated_at
-`
+INSERT INTO lessons (group_id, title, description, scheduled_at, duration_min, section_title, section_num, order_num, is_published, visibility, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+RETURNING ` + AllLessonCols
 
 type CreateLessonParams struct {
-	GroupID     int32              `json:"group_id"`
-	Title       string             `json:"title"`
-	Description pgtype.Text        `json:"description"`
-	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
-	DurationMin int16              `json:"duration_min"`
+	GroupID      pgtype.Int4        `json:"group_id"`
+	Title        string             `json:"title"`
+	Description  pgtype.Text        `json:"description"`
+	ScheduledAt  pgtype.Timestamptz `json:"scheduled_at"`
+	DurationMin  int16              `json:"duration_min"`
+	SectionTitle pgtype.Text        `json:"section_title"`
+	SectionNum   int16              `json:"section_num"`
+	OrderNum     int16              `json:"order_num"`
+	IsPublished  bool               `json:"is_published"`
+	Visibility   string             `json:"visibility"`
+	CreatedBy    pgtype.Int4        `json:"created_by"`
 }
 
 func (q *Queries) CreateLesson(ctx context.Context, arg CreateLessonParams) (Lesson, error) {
 	row := q.db.QueryRow(ctx, createLesson,
-		arg.GroupID,
-		arg.Title,
-		arg.Description,
-		arg.ScheduledAt,
-		arg.DurationMin,
+		arg.GroupID, arg.Title, arg.Description, arg.ScheduledAt,
+		arg.DurationMin, arg.SectionTitle, arg.SectionNum, arg.OrderNum,
+		arg.IsPublished, arg.Visibility, arg.CreatedBy,
 	)
-	var i Lesson
-	err := row.Scan(
-		&i.ID,
-		&i.GroupID,
-		&i.Title,
-		&i.Description,
-		&i.ScheduledAt,
-		&i.DurationMin,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
+	return scanLesson(row)
 }
 
 const deleteLesson = `-- name: DeleteLesson :exec
@@ -57,36 +64,23 @@ func (q *Queries) DeleteLesson(ctx context.Context, id int32) error {
 }
 
 const getLessonByID = `-- name: GetLessonByID :one
-SELECT id, group_id, title, description, scheduled_at, duration_min, created_at, updated_at FROM lessons WHERE id = $1
-`
+SELECT ` + AllLessonCols + ` FROM lessons WHERE id = $1`
 
 func (q *Queries) GetLessonByID(ctx context.Context, id int32) (Lesson, error) {
 	row := q.db.QueryRow(ctx, getLessonByID, id)
-	var i Lesson
-	err := row.Scan(
-		&i.ID,
-		&i.GroupID,
-		&i.Title,
-		&i.Description,
-		&i.ScheduledAt,
-		&i.DurationMin,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
+	return scanLesson(row)
 }
 
 const getLessonsByGroup = `-- name: GetLessonsByGroup :many
-SELECT id, group_id, title, description, scheduled_at, duration_min, created_at, updated_at FROM lessons
+SELECT ` + AllLessonCols + ` FROM lessons
 WHERE group_id = $1
-ORDER BY scheduled_at
-LIMIT $2 OFFSET $3
-`
+ORDER BY section_num, order_num, scheduled_at, id
+LIMIT $2 OFFSET $3`
 
 type GetLessonsByGroupParams struct {
-	GroupID int32 `json:"group_id"`
-	Limit   int32 `json:"limit"`
-	Offset  int32 `json:"offset"`
+	GroupID pgtype.Int4 `json:"group_id"`
+	Limit   int32       `json:"limit"`
+	Offset  int32       `json:"offset"`
 }
 
 func (q *Queries) GetLessonsByGroup(ctx context.Context, arg GetLessonsByGroupParams) ([]Lesson, error) {
@@ -97,60 +91,37 @@ func (q *Queries) GetLessonsByGroup(ctx context.Context, arg GetLessonsByGroupPa
 	defer rows.Close()
 	items := []Lesson{}
 	for rows.Next() {
-		var i Lesson
-		if err := rows.Scan(
-			&i.ID,
-			&i.GroupID,
-			&i.Title,
-			&i.Description,
-			&i.ScheduledAt,
-			&i.DurationMin,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
+		i, err := scanLesson(rows)
+		if err != nil {
 			return nil, err
 		}
 		items = append(items, i)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+	return items, rows.Err()
 }
 
 const updateLesson = `-- name: UpdateLesson :one
 UPDATE lessons
-SET title = $2, description = $3, scheduled_at = $4, duration_min = $5
-WHERE id = $1
-RETURNING id, group_id, title, description, scheduled_at, duration_min, created_at, updated_at
-`
+SET title=$2, description=$3, scheduled_at=$4, duration_min=$5,
+    section_title=$6, section_num=$7, order_num=$8
+WHERE id=$1
+RETURNING ` + AllLessonCols
 
 type UpdateLessonParams struct {
-	ID          int32              `json:"id"`
-	Title       string             `json:"title"`
-	Description pgtype.Text        `json:"description"`
-	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
-	DurationMin int16              `json:"duration_min"`
+	ID           int32              `json:"id"`
+	Title        string             `json:"title"`
+	Description  pgtype.Text        `json:"description"`
+	ScheduledAt  pgtype.Timestamptz `json:"scheduled_at"`
+	DurationMin  int16              `json:"duration_min"`
+	SectionTitle pgtype.Text        `json:"section_title"`
+	SectionNum   int16              `json:"section_num"`
+	OrderNum     int16              `json:"order_num"`
 }
 
 func (q *Queries) UpdateLesson(ctx context.Context, arg UpdateLessonParams) (Lesson, error) {
 	row := q.db.QueryRow(ctx, updateLesson,
-		arg.ID,
-		arg.Title,
-		arg.Description,
-		arg.ScheduledAt,
-		arg.DurationMin,
+		arg.ID, arg.Title, arg.Description, arg.ScheduledAt,
+		arg.DurationMin, arg.SectionTitle, arg.SectionNum, arg.OrderNum,
 	)
-	var i Lesson
-	err := row.Scan(
-		&i.ID,
-		&i.GroupID,
-		&i.Title,
-		&i.Description,
-		&i.ScheduledAt,
-		&i.DurationMin,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
+	return scanLesson(row)
 }

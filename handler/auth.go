@@ -2,7 +2,10 @@ package handler
 
 import (
 	"context"
+	"crypto/rand"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	db "testing-app/db/sqlc"
@@ -20,57 +23,101 @@ func (h *AuthHandler) roleCode(ctx context.Context, roleID int32) string {
 	return r.Code
 }
 
+// getUserByEmail returns user by email using raw query
+func (h *AuthHandler) getUserByEmail(ctx context.Context, email string) (db.User, error) {
+	var u db.User
+	err := h.pool.QueryRow(ctx, `
+		SELECT id, phone, email, first_name, last_name, middle_name, city,
+		       role_id, password_hash, telegram_chat_id, is_banned,
+		       created_at, updated_at, profile_subject1, profile_subject2, avatar_url
+		FROM users WHERE email = $1
+	`, email).Scan(
+		&u.ID, &u.Phone, &u.Email, &u.FirstName, &u.LastName, &u.MiddleName, &u.City,
+		&u.RoleID, &u.PasswordHash, &u.TelegramChatID, &u.IsBanned,
+		&u.CreatedAt, &u.UpdatedAt, &u.ProfileSubject1, &u.ProfileSubject2, &u.AvatarUrl,
+	)
+	return u, err
+}
+
+// getOTPByEmail returns active OTP for email
+func (h *AuthHandler) getOTPByEmail(ctx context.Context, email, purpose string) (db.OtpCode, error) {
+	var o db.OtpCode
+	err := h.pool.QueryRow(ctx, `
+		SELECT id, phone, email, code, purpose, attempts, is_used, expires_at, created_at
+		FROM otp_codes
+		WHERE email = $1
+		  AND purpose = $2
+		  AND is_used = FALSE
+		  AND expires_at > NOW()
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, email, purpose).Scan(
+		&o.ID, &o.Phone, &o.Email, &o.Code, &o.Purpose,
+		&o.Attempts, &o.IsUsed, &o.ExpiresAt, &o.CreatedAt,
+	)
+	return o, err
+}
+
 // POST /api/v1/auth/send-otp
 type sendOTPReq struct {
-	Phone   string `json:"phone" binding:"required"`
+	Email   string `json:"email" binding:"required,email"`
 	Purpose string `json:"purpose" binding:"required,oneof=register login reset_password"`
 }
 
 func (h *AuthHandler) SendOTP(c *gin.Context) {
 	var req sendOTPReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Введите корректный email"})
 		return
 	}
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 
-	code := randomOTP()
+	// For login/reset_password — user must exist
+	if req.Purpose == "login" || req.Purpose == "reset_password" {
+		if _, err := h.getUserByEmail(context.Background(), req.Email); err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Пользователь с таким email не найден"})
+			return
+		}
+	}
+	// For register — user must NOT exist
+	if req.Purpose == "register" {
+		if _, err := h.getUserByEmail(context.Background(), req.Email); err == nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "Email уже зарегистрирован"})
+			return
+		}
+	}
+
+	code := randomOTP4()
 	hash, err := bcrypt.GenerateFromPassword([]byte(code), bcrypt.DefaultCost)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
 
-	_, err = h.q.CreateOTPCode(context.Background(), db.CreateOTPCodeParams{
-		Phone:     req.Phone,
-		Code:      string(hash),
-		Purpose:   req.Purpose,
-		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(15 * time.Minute), Valid: true},
-	})
+	_, err = h.pool.Exec(context.Background(), `
+		INSERT INTO otp_codes (email, code, purpose, expires_at)
+		VALUES ($1, $2, $3, $4)
+	`, req.Email, string(hash), req.Purpose,
+		pgtype.Timestamptz{Time: time.Now().Add(15 * time.Minute), Valid: true},
+	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
 
-	// Определяем telegram_chat_id если пользователь уже существует
-	var chatID int64
-	if u, err := h.q.GetUserByPhone(context.Background(), req.Phone); err == nil && u.TelegramChatID.Valid {
-		chatID = u.TelegramChatID.Int64
-	}
-	_ = h.notifier.SendOTP(c.Request.Context(), req.Phone, chatID, code)
+	_ = h.notifier.SendOTP(c.Request.Context(), req.Email, 0, code)
 
 	c.JSON(http.StatusOK, gin.H{"message": "code sent"})
 }
 
 // POST /api/v1/auth/register
 type registerReq struct {
-	Phone      string `json:"phone" binding:"required"`
-	Code       string `json:"code"`
-	FirstName  string `json:"first_name" binding:"required"`
-	LastName   string `json:"last_name" binding:"required"`
-	MiddleName string `json:"middle_name"`
-	City       string `json:"city"`
-	RoleID     int32  `json:"role_id" binding:"required"`
-	Password   string `json:"password"`
+	Email     string `json:"email" binding:"required,email"`
+	Code      string `json:"code" binding:"required"`
+	FirstName string `json:"first_name" binding:"required"`
+	LastName  string `json:"last_name" binding:"required"`
+	Password  string `json:"password" binding:"required,min=8"`
+	RoleID    int32  `json:"role_id" binding:"required"`
 }
 
 func (h *AuthHandler) Register(c *gin.Context) {
@@ -79,70 +126,65 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 
-	if h.cfg.OTPEnabled {
-		otp, err := h.q.GetActiveOTPCode(context.Background(), db.GetActiveOTPCodeParams{
-			Phone:   req.Phone,
-			Purpose: "register",
-		})
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or expired code"})
-			return
-		}
-		if otp.Attempts >= 3 {
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many attempts"})
-			return
-		}
-		if err := bcrypt.CompareHashAndPassword([]byte(otp.Code), []byte(req.Code)); err != nil {
-			_ = h.q.IncrementOTPAttempts(context.Background(), otp.ID)
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid code"})
-			return
-		}
-		_ = h.q.MarkOTPUsed(context.Background(), otp.ID)
-	}
-
-	user, err := h.q.CreateUser(context.Background(), db.CreateUserParams{
-		Phone:      req.Phone,
-		FirstName:  req.FirstName,
-		LastName:   req.LastName,
-		MiddleName: pgtype.Text{String: req.MiddleName, Valid: req.MiddleName != ""},
-		City:       pgtype.Text{String: req.City, Valid: req.City != ""},
-		RoleID:     req.RoleID,
-	})
+	// Verify OTP
+	otp, err := h.getOTPByEmail(context.Background(), req.Email, "register")
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "user already exists"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный или истёкший код"})
 		return
 	}
-
-	if req.Password != "" {
-		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-		if err == nil {
-			_ = h.q.UpdatePassword(context.Background(), db.UpdatePasswordParams{
-				ID:           user.ID,
-				PasswordHash: pgtype.Text{String: string(hash), Valid: true},
-			})
-		}
+	if otp.Attempts >= 3 {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Слишком много попыток"})
+		return
 	}
-
-	// If user came via Telegram bot, save their chat_id
-	if v, ok := pendingChats.LoadAndDelete(req.Phone); ok {
-		chatID := v.(int64)
-		_, _ = h.pool.Exec(context.Background(),
-			"UPDATE users SET telegram_chat_id=$1 WHERE id=$2", chatID, user.ID)
+	if err := bcrypt.CompareHashAndPassword([]byte(otp.Code), []byte(req.Code)); err != nil {
+		_ = h.q.IncrementOTPAttempts(context.Background(), otp.ID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный код"})
+		return
 	}
+	_ = h.q.MarkOTPUsed(context.Background(), otp.ID)
 
-	tokens, _, err := h.issueTokens(c, user.ID, h.roleCode(context.Background(), user.RoleID))
+	// Hash password
+	pwHash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
 
+	// Create user with email (phone = NULL)
+	var u db.User
+	err = h.pool.QueryRow(context.Background(), `
+		INSERT INTO users (email, first_name, last_name, role_id, password_hash)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, phone, email, first_name, last_name, middle_name, city,
+		          role_id, password_hash, telegram_chat_id, is_banned,
+		          created_at, updated_at, profile_subject1, profile_subject2, avatar_url
+	`, req.Email, req.FirstName, req.LastName, req.RoleID, string(pwHash)).Scan(
+		&u.ID, &u.Phone, &u.Email, &u.FirstName, &u.LastName, &u.MiddleName, &u.City,
+		&u.RoleID, &u.PasswordHash, &u.TelegramChatID, &u.IsBanned,
+		&u.CreatedAt, &u.UpdatedAt, &u.ProfileSubject1, &u.ProfileSubject2, &u.AvatarUrl,
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+			c.JSON(http.StatusConflict, gin.H{"error": "Email уже зарегистрирован"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+
+	tokens, _, err := h.issueTokens(c, u.ID, h.roleCode(context.Background(), u.RoleID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
 	c.JSON(http.StatusCreated, tokens)
 }
 
 // POST /api/v1/auth/login
 type loginReq struct {
-	Phone    string `json:"phone" binding:"required"`
+	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required"`
 }
 
@@ -152,22 +194,23 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 
-	user, err := h.q.GetUserByPhone(context.Background(), req.Phone)
+	user, err := h.getUserByEmail(context.Background(), req.Email)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Неверный email или пароль"})
 		return
 	}
 	if user.IsBanned {
-		c.JSON(http.StatusForbidden, gin.H{"error": "user is banned"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "Аккаунт заблокирован"})
 		return
 	}
 	if !user.PasswordHash.Valid {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "password not set, use OTP login"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Пароль не задан"})
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash.String), []byte(req.Password)); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Неверный email или пароль"})
 		return
 	}
 
@@ -176,7 +219,6 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
-
 	c.JSON(http.StatusOK, tokens)
 }
 
@@ -219,11 +261,10 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
-
 	c.JSON(http.StatusOK, tokens)
 }
 
-// POST /api/v1/auth/logout  (требует JWT middleware)
+// POST /api/v1/auth/logout
 func (h *AuthHandler) Logout(c *gin.Context) {
 	sessionID, _ := c.Get("session_id")
 	id, ok := sessionID.(int32)
@@ -237,7 +278,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 
 // POST /api/v1/auth/login/otp
 type loginOTPReq struct {
-	Phone string `json:"phone" binding:"required"`
+	Email string `json:"email" binding:"required,email"`
 	Code  string `json:"code" binding:"required"`
 }
 
@@ -247,32 +288,30 @@ func (h *AuthHandler) LoginOTP(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 
-	user, err := h.q.GetUserByPhone(context.Background(), req.Phone)
+	user, err := h.getUserByEmail(context.Background(), req.Email)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Пользователь не найден"})
 		return
 	}
 	if user.IsBanned {
-		c.JSON(http.StatusForbidden, gin.H{"error": "user is banned"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "Аккаунт заблокирован"})
 		return
 	}
 
-	otp, err := h.q.GetActiveOTPCode(context.Background(), db.GetActiveOTPCodeParams{
-		Phone:   req.Phone,
-		Purpose: "login",
-	})
+	otp, err := h.getOTPByEmail(context.Background(), req.Email, "login")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or expired code"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный или истёкший код"})
 		return
 	}
 	if otp.Attempts >= 3 {
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many attempts"})
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Слишком много попыток"})
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(otp.Code), []byte(req.Code)); err != nil {
 		_ = h.q.IncrementOTPAttempts(context.Background(), otp.ID)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid code"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный код"})
 		return
 	}
 	_ = h.q.MarkOTPUsed(context.Background(), otp.ID)
@@ -287,7 +326,7 @@ func (h *AuthHandler) LoginOTP(c *gin.Context) {
 
 // POST /api/v1/auth/reset-password
 type resetPasswordReq struct {
-	Phone    string `json:"phone" binding:"required"`
+	Email    string `json:"email" binding:"required,email"`
 	Code     string `json:"code" binding:"required"`
 	Password string `json:"password" binding:"required,min=8"`
 }
@@ -298,29 +337,27 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 
-	otp, err := h.q.GetActiveOTPCode(context.Background(), db.GetActiveOTPCodeParams{
-		Phone:   req.Phone,
-		Purpose: "reset_password",
-	})
+	otp, err := h.getOTPByEmail(context.Background(), req.Email, "reset_password")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or expired code"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный или истёкший код"})
 		return
 	}
 	if otp.Attempts >= 3 {
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many attempts"})
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Слишком много попыток"})
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(otp.Code), []byte(req.Code)); err != nil {
 		_ = h.q.IncrementOTPAttempts(context.Background(), otp.ID)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid code"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный код"})
 		return
 	}
 	_ = h.q.MarkOTPUsed(context.Background(), otp.ID)
 
-	user, err := h.q.GetUserByPhone(context.Background(), req.Phone)
+	user, err := h.getUserByEmail(context.Background(), req.Email)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user not found"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Пользователь не найден"})
 		return
 	}
 
@@ -341,4 +378,15 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, tokens)
+}
+
+// randomOTP4 returns a 4-digit code
+func randomOTP4() string {
+	b := make([]byte, 2)
+	_, _ = rand.Read(b)
+	n := (int(b[0])<<8 | int(b[1])) % 10000
+	if n < 0 {
+		n = -n
+	}
+	return fmt.Sprintf("%04d", n)
 }

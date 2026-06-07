@@ -1,0 +1,1 @@
+ALTER TABLE lessons ADD COLUMN IF NOT EXISTS topic_id INT REFERENCES topics(id);

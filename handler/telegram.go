@@ -111,7 +111,7 @@ func (h *TelegramHandler) Webhook(c *gin.Context) {
 		return
 	}
 	_, err = h.q.CreateOTPCode(context.Background(), db.CreateOTPCodeParams{
-		Phone:     phone,
+		Phone:     pgtype.Text{String: phone, Valid: phone != ""},
 		Code:      string(hash),
 		Purpose:   purpose,
 		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(15 * time.Minute), Valid: true},

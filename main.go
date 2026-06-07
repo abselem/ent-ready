@@ -97,7 +97,15 @@ func main() {
 	}
 
 	var sender notify.Sender
-	if cfg.TelegramBotToken != "" {
+	if cfg.SMTP.Host != "" {
+		sender = notify.EmailSender{
+			Host:     cfg.SMTP.Host,
+			Port:     cfg.SMTP.Port,
+			Username: cfg.SMTP.Username,
+			Password: cfg.SMTP.Password,
+			From:     cfg.SMTP.From,
+		}
+	} else if cfg.TelegramBotToken != "" {
 		sender = notify.TelegramSender{BotToken: cfg.TelegramBotToken}
 	} else {
 		sender = notify.LogSender{}

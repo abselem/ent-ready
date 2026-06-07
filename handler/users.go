@@ -102,6 +102,27 @@ func (h *UserHandler) UpdateMe(c *gin.Context) {
 	c.JSON(http.StatusOK, user)
 }
 
+// PUT /api/v1/users/me/phone
+type updatePhoneReq struct {
+	Phone string `json:"phone" binding:"required"`
+}
+
+func (h *UserHandler) UpdatePhone(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	var req updatePhoneReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	_, err := h.pool.Exec(context.Background(),
+		`UPDATE users SET phone = $2 WHERE id = $1`, userID.(int32), req.Phone)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"phone": req.Phone})
+}
+
 // PUT /api/v1/users/me/password
 type setPasswordReq struct {
 	Password string `json:"password" binding:"required,min=8"`
