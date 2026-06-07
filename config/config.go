@@ -13,6 +13,7 @@ type Config struct {
 	DB                  DBConfig
 	JWT                 JWTConfig
 	SMTP                SMTPConfig
+	Resend              ResendConfig
 	ServerAddr          string
 	TelegramBotToken    string
 	TelegramBotUsername string
@@ -27,6 +28,11 @@ type SMTPConfig struct {
 	Username string
 	Password string
 	From     string
+}
+
+type ResendConfig struct {
+	APIKey string
+	From   string
 }
 
 type DBConfig struct {
@@ -87,6 +93,10 @@ func Load() (*Config, error) {
 			Username: getEnv("SMTP_USERNAME", ""),
 			Password: getEnv("SMTP_PASSWORD", ""),
 			From:     getEnv("SMTP_FROM", ""),
+		},
+		Resend: ResendConfig{
+			APIKey: getEnv("RESEND_API_KEY", ""),
+			From:   getEnv("RESEND_FROM", "ENT Ready <onboarding@resend.dev>"),
 		},
 		ServerAddr:          serverAddr,
 		TelegramBotToken:    getEnv("TELEGRAM_BOT_TOKEN", ""),

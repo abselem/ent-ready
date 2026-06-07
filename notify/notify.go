@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -96,6 +97,40 @@ func (e EmailSender) SendOTP(_ context.Context, emailTo string, _ int64, code st
 		return err
 	}
 	return c.Quit()
+}
+
+// ResendSender — отправляет OTP через Resend HTTP API
+type ResendSender struct {
+	APIKey string
+	From   string // например "ENT Ready <onboarding@resend.dev>"
+}
+
+func (r ResendSender) SendOTP(_ context.Context, emailTo string, _ int64, code string) error {
+	body, _ := json.Marshal(map[string]any{
+		"from":    r.From,
+		"to":      []string{emailTo},
+		"subject": "Ваш код подтверждения — ENT Ready",
+		"text":    fmt.Sprintf("Ваш код: %s\n\nКод действителен 15 минут. Не передавайте его никому.", code),
+	})
+
+	req, err := http.NewRequest(http.MethodPost, "https://api.resend.com/emails", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+r.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("resend API error %d: %s", resp.StatusCode, string(b))
+	}
+	return nil
 }
 
 // TelegramSender — шлёт через Telegram Bot API, fallback на лог

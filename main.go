@@ -97,7 +97,12 @@ func main() {
 	}
 
 	var sender notify.Sender
-	if cfg.SMTP.Host != "" {
+	if cfg.Resend.APIKey != "" {
+		sender = notify.ResendSender{
+			APIKey: cfg.Resend.APIKey,
+			From:   cfg.Resend.From,
+		}
+	} else if cfg.SMTP.Host != "" {
 		sender = notify.EmailSender{
 			Host:     cfg.SMTP.Host,
 			Port:     cfg.SMTP.Port,
