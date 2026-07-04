@@ -883,7 +883,7 @@ func (h *TestHandler) GetTestResults(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"test": test, "results": rows})
 }
 
-// GET /api/v1/tests/:id — тест с вопросами (для учителя — с is_correct)
+// GET /api/v1/tests/:id — тест с вопросами
 func (h *TestHandler) GetTestFull(c *gin.Context) {
 	id, err := parseID(c, "id")
 	if err != nil {
@@ -898,24 +898,61 @@ func (h *TestHandler) GetTestFull(c *gin.Context) {
 	questions, _ := h.q.GetQuestionsByTest(context.Background(), id)
 	options, _ := h.q.GetOptionsByTest(context.Background(), id)
 
-	// Сгруппировать варианты по question_id
-	optMap := make(map[int32][]db.AnswerOption)
-	for _, o := range options {
-		optMap[o.QuestionID] = append(optMap[o.QuestionID], o)
+	role, _ := c.Get("role")
+	if role == "teacher" {
+		optMap := make(map[int32][]db.AnswerOption)
+		for _, o := range options {
+			optMap[o.QuestionID] = append(optMap[o.QuestionID], o)
+		}
+		type questionWithOptions struct {
+			db.Question
+			Options []db.AnswerOption `json:"options"`
+		}
+		qs := make([]questionWithOptions, len(questions))
+		for i, q := range questions {
+			qs[i] = questionWithOptions{Question: q, Options: optMap[q.ID]}
+			if qs[i].Options == nil {
+				qs[i].Options = []db.AnswerOption{}
+			}
+		}
+		c.JSON(http.StatusOK, gin.H{"test": test, "questions": qs})
+		return
 	}
 
-	type questionWithOptions struct {
-		db.Question
-		Options []db.AnswerOption `json:"options"`
+	// Студент и все остальные роли: варианты ответов без is_correct
+	type optionView struct {
+		ID       int32  `json:"id"`
+		Text     string `json:"text"`
+		OrderNum int16  `json:"order_num"`
 	}
-	qs := make([]questionWithOptions, len(questions))
+	type questionView struct {
+		ID       int32        `json:"id"`
+		Text     string       `json:"text"`
+		OrderNum int16        `json:"order_num"`
+		Points   int16        `json:"points"`
+		Options  []optionView `json:"options"`
+	}
+	optMap := make(map[int32][]optionView)
+	for _, o := range options {
+		optMap[o.QuestionID] = append(optMap[o.QuestionID], optionView{
+			ID:       o.ID,
+			Text:     o.Text,
+			OrderNum: o.OrderNum,
+		})
+	}
+	qs := make([]questionView, len(questions))
 	for i, q := range questions {
-		qs[i] = questionWithOptions{Question: q, Options: optMap[q.ID]}
+		qs[i] = questionView{
+			ID:       q.ID,
+			Text:     q.Text,
+			OrderNum: q.OrderNum,
+			Points:   q.Points,
+			Options:  optMap[q.ID],
+		}
 		if qs[i].Options == nil {
-			qs[i].Options = []db.AnswerOption{}
+			qs[i].Options = []optionView{}
 		}
 	}
-
 	c.JSON(http.StatusOK, gin.H{"test": test, "questions": qs})
 }
 
