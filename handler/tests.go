@@ -22,6 +22,69 @@ func NewTestHandler(pool *pgxpool.Pool, _ *config.Config) *TestHandler {
 	return &TestHandler{q: db.New(pool), pool: pool}
 }
 
+func (h *TestHandler) requireTestOwner(c *gin.Context, ctx context.Context, testID int32) (db.Test, bool) {
+	test, err := h.q.GetTestByID(ctx, testID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "test not found"})
+		return db.Test{}, false
+	}
+	userID, _ := c.Get("user_id")
+	if !test.CreatedBy.Valid || test.CreatedBy.Int32 != userID.(int32) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "test not found"})
+		return db.Test{}, false
+	}
+	return test, true
+}
+
+func (h *TestHandler) requireQuestionOwner(c *gin.Context, ctx context.Context, questionID int32) bool {
+	var ownerID pgtype.Int4
+	err := h.pool.QueryRow(ctx, `SELECT owner_id FROM questions WHERE id=$1`, questionID).Scan(&ownerID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "question not found"})
+		return false
+	}
+	userID, _ := c.Get("user_id")
+	if !ownerID.Valid || ownerID.Int32 != userID.(int32) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "question not found"})
+		return false
+	}
+	return true
+}
+
+func (h *TestHandler) requireOptionOwner(c *gin.Context, ctx context.Context, optionID int32) bool {
+	var ownerID pgtype.Int4
+	err := h.pool.QueryRow(ctx, `
+		SELECT q.owner_id FROM answer_options ao
+		JOIN questions q ON q.id = ao.question_id
+		WHERE ao.id=$1
+	`, optionID).Scan(&ownerID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "option not found"})
+		return false
+	}
+	userID, _ := c.Get("user_id")
+	if !ownerID.Valid || ownerID.Int32 != userID.(int32) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "option not found"})
+		return false
+	}
+	return true
+}
+
+func (h *TestHandler) requireContextOwner(c *gin.Context, ctx context.Context, contextID int32) bool {
+	var createdBy int32
+	err := h.pool.QueryRow(ctx, `SELECT created_by FROM question_contexts WHERE id=$1`, contextID).Scan(&createdBy)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "context not found"})
+		return false
+	}
+	userID, _ := c.Get("user_id")
+	if createdBy != userID.(int32) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "context not found"})
+		return false
+	}
+	return true
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // УЧИТЕЛЬ — управление тестом
 // ═══════════════════════════════════════════════════════════════════════════
@@ -124,8 +187,12 @@ type updateTestReq struct {
 }
 
 func (h *TestHandler) UpdateTest(c *gin.Context) {
+	ctx := context.Background()
 	id, err := parseID(c, "id")
 	if err != nil {
+		return
+	}
+	if _, ok := h.requireTestOwner(c, ctx, id); !ok {
 		return
 	}
 	var req updateTestReq
@@ -173,11 +240,15 @@ func (h *TestHandler) UpdateTest(c *gin.Context) {
 
 // POST /api/v1/tests/:id/publish
 func (h *TestHandler) PublishTest(c *gin.Context) {
+	ctx := context.Background()
 	id, err := parseID(c, "id")
 	if err != nil {
 		return
 	}
-	if err := h.q.PublishTest(context.Background(), id); err != nil {
+	if _, ok := h.requireTestOwner(c, ctx, id); !ok {
+		return
+	}
+	if err := h.q.PublishTest(ctx, id); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "test not found"})
 		return
 	}
@@ -186,11 +257,15 @@ func (h *TestHandler) PublishTest(c *gin.Context) {
 
 // DELETE /api/v1/tests/:id
 func (h *TestHandler) DeleteTest(c *gin.Context) {
+	ctx := context.Background()
 	id, err := parseID(c, "id")
 	if err != nil {
 		return
 	}
-	_ = h.q.DeleteTest(context.Background(), id)
+	if _, ok := h.requireTestOwner(c, ctx, id); !ok {
+		return
+	}
+	_ = h.q.DeleteTest(ctx, id)
 	c.Status(http.StatusNoContent)
 }
 
@@ -218,6 +293,9 @@ func (h *TestHandler) CreateQuestion(c *gin.Context) {
 	ctx := context.Background()
 	testID, err := parseID(c, "id")
 	if err != nil {
+		return
+	}
+	if _, ok := h.requireTestOwner(c, ctx, testID); !ok {
 		return
 	}
 	userID, _ := c.Get("user_id")
@@ -550,11 +628,15 @@ func (h *TestHandler) ListMyContexts(c *gin.Context) {
 
 // DELETE /api/v1/question-contexts/:id
 func (h *TestHandler) DeleteContext(c *gin.Context) {
+	ctx := context.Background()
 	id, err := parseID(c, "id")
 	if err != nil {
 		return
 	}
-	h.pool.Exec(context.Background(), `DELETE FROM question_contexts WHERE id = $1`, id)
+	if !h.requireContextOwner(c, ctx, id) {
+		return
+	}
+	h.pool.Exec(ctx, `DELETE FROM question_contexts WHERE id = $1`, id)
 	c.Status(http.StatusNoContent)
 }
 
@@ -567,6 +649,9 @@ func (h *TestHandler) LinkQuestionToTest(c *gin.Context) {
 	ctx := context.Background()
 	testID, err := parseID(c, "id")
 	if err != nil {
+		return
+	}
+	if _, ok := h.requireTestOwner(c, ctx, testID); !ok {
 		return
 	}
 	var req linkQuestionReq
@@ -587,15 +672,19 @@ func (h *TestHandler) LinkQuestionToTest(c *gin.Context) {
 
 // DELETE /api/v1/tests/:id/questions/:qid — убрать вопрос из теста (не удалять из банка)
 func (h *TestHandler) UnlinkQuestionFromTest(c *gin.Context) {
+	ctx := context.Background()
 	testID, err := parseID(c, "id")
 	if err != nil {
+		return
+	}
+	if _, ok := h.requireTestOwner(c, ctx, testID); !ok {
 		return
 	}
 	qid, err := parseID(c, "qid")
 	if err != nil {
 		return
 	}
-	_ = h.q.RemoveQuestionFromTest(context.Background(), db.RemoveQuestionFromTestParams{
+	_ = h.q.RemoveQuestionFromTest(ctx, db.RemoveQuestionFromTestParams{
 		TestID: testID, QuestionID: qid,
 	})
 	c.Status(http.StatusNoContent)
@@ -679,8 +768,12 @@ type updateQuestionReq struct {
 }
 
 func (h *TestHandler) UpdateQuestion(c *gin.Context) {
+	ctx := context.Background()
 	id, err := parseID(c, "id")
 	if err != nil {
+		return
+	}
+	if !h.requireQuestionOwner(c, ctx, id) {
 		return
 	}
 	var req updateQuestionReq
@@ -721,11 +814,15 @@ func (h *TestHandler) UpdateQuestion(c *gin.Context) {
 
 // DELETE /api/v1/questions/:id
 func (h *TestHandler) DeleteQuestion(c *gin.Context) {
+	ctx := context.Background()
 	id, err := parseID(c, "id")
 	if err != nil {
 		return
 	}
-	_ = h.q.DeleteQuestion(context.Background(), id)
+	if !h.requireQuestionOwner(c, ctx, id) {
+		return
+	}
+	_ = h.q.DeleteQuestion(ctx, id)
 	c.Status(http.StatusNoContent)
 }
 
@@ -737,8 +834,12 @@ type createOptionReq struct {
 }
 
 func (h *TestHandler) CreateOption(c *gin.Context) {
+	ctx := context.Background()
 	questionID, err := parseID(c, "id")
 	if err != nil {
+		return
+	}
+	if !h.requireQuestionOwner(c, ctx, questionID) {
 		return
 	}
 	var req createOptionReq
@@ -768,8 +869,12 @@ type updateOptionReq struct {
 }
 
 func (h *TestHandler) UpdateOption(c *gin.Context) {
+	ctx := context.Background()
 	id, err := parseID(c, "id")
 	if err != nil {
+		return
+	}
+	if !h.requireOptionOwner(c, ctx, id) {
 		return
 	}
 	var req updateOptionReq
@@ -793,11 +898,15 @@ func (h *TestHandler) UpdateOption(c *gin.Context) {
 
 // DELETE /api/v1/options/:id
 func (h *TestHandler) DeleteOption(c *gin.Context) {
+	ctx := context.Background()
 	id, err := parseID(c, "id")
 	if err != nil {
 		return
 	}
-	_ = h.q.DeleteAnswerOption(context.Background(), id)
+	if !h.requireOptionOwner(c, ctx, id) {
+		return
+	}
+	_ = h.q.DeleteAnswerOption(ctx, id)
 	c.Status(http.StatusNoContent)
 }
 
@@ -849,6 +958,11 @@ func (h *TestHandler) GetTestResults(c *gin.Context) {
 	}
 	test, err := h.q.GetTestByID(ctx, id)
 	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "test not found"})
+		return
+	}
+	userID, _ := c.Get("user_id")
+	if !test.CreatedBy.Valid || test.CreatedBy.Int32 != userID.(int32) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "test not found"})
 		return
 	}

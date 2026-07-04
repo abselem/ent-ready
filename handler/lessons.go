@@ -23,6 +23,39 @@ func NewLessonHandler(pool *pgxpool.Pool, _ *config.Config) *LessonHandler {
 	return &LessonHandler{q: db.New(pool), pool: pool}
 }
 
+func (h *LessonHandler) requireLessonOwner(c *gin.Context, ctx context.Context, lessonID int32) (db.Lesson, bool) {
+	lesson, err := h.q.GetLessonByID(ctx, lessonID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "lesson not found"})
+		return db.Lesson{}, false
+	}
+	userID, _ := c.Get("user_id")
+	if !lesson.CreatedBy.Valid || lesson.CreatedBy.Int32 != userID.(int32) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "lesson not found"})
+		return db.Lesson{}, false
+	}
+	return lesson, true
+}
+
+func (h *LessonHandler) requireBlockOwner(c *gin.Context, ctx context.Context, blockID int32) bool {
+	var createdBy pgtype.Int4
+	err := h.pool.QueryRow(ctx, `
+		SELECT l.created_by FROM lesson_blocks lb
+		JOIN lessons l ON l.id = lb.lesson_id
+		WHERE lb.id=$1
+	`, blockID).Scan(&createdBy)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "block not found"})
+		return false
+	}
+	userID, _ := c.Get("user_id")
+	if !createdBy.Valid || createdBy.Int32 != userID.(int32) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "block not found"})
+		return false
+	}
+	return true
+}
+
 // ─── Create ───────────────────────────────────────────────────────────────────
 
 type createLessonReq struct {
@@ -390,8 +423,12 @@ type updateLessonReq struct {
 }
 
 func (h *LessonHandler) Update(c *gin.Context) {
+	ctx := context.Background()
 	id, err := parseID(c, "id")
 	if err != nil {
+		return
+	}
+	if _, ok := h.requireLessonOwner(c, ctx, id); !ok {
 		return
 	}
 	var req updateLessonReq
@@ -432,8 +469,12 @@ type updateLessonTopicsReq struct {
 
 // PUT /api/v1/lessons/:id/topics
 func (h *LessonHandler) UpdateTopics(c *gin.Context) {
+	ctx := context.Background()
 	id, err := parseID(c, "id")
 	if err != nil {
+		return
+	}
+	if _, ok := h.requireLessonOwner(c, ctx, id); !ok {
 		return
 	}
 	var req updateLessonTopicsReq
@@ -450,7 +491,6 @@ func (h *LessonHandler) UpdateTopics(c *gin.Context) {
 		subtopicID = pgtype.Int4{Int32: *req.SubtopicID, Valid: true}
 	}
 
-	ctx := context.Background()
 	_, err = h.pool.Exec(ctx, `
 		UPDATE lessons SET topic_id=$2, subtopic_id=$3 WHERE id=$1
 	`, id, topicID, subtopicID)
@@ -464,11 +504,15 @@ func (h *LessonHandler) UpdateTopics(c *gin.Context) {
 // ─── Delete ───────────────────────────────────────────────────────────────────
 
 func (h *LessonHandler) Delete(c *gin.Context) {
+	ctx := context.Background()
 	id, err := parseID(c, "id")
 	if err != nil {
 		return
 	}
-	h.q.DeleteLesson(context.Background(), id)
+	if _, ok := h.requireLessonOwner(c, ctx, id); !ok {
+		return
+	}
+	h.q.DeleteLesson(ctx, id)
 	c.Status(http.StatusNoContent)
 }
 
@@ -480,8 +524,12 @@ type publishLessonReq struct {
 
 // POST /api/v1/lessons/:id/publish
 func (h *LessonHandler) Publish(c *gin.Context) {
+	ctx := context.Background()
 	id, err := parseID(c, "id")
 	if err != nil {
+		return
+	}
+	if _, ok := h.requireLessonOwner(c, ctx, id); !ok {
 		return
 	}
 	var req publishLessonReq
@@ -489,7 +537,6 @@ func (h *LessonHandler) Publish(c *gin.Context) {
 	if req.Visibility == "" {
 		req.Visibility = "all"
 	}
-	ctx := context.Background()
 	var lesson db.Lesson
 	err = h.pool.QueryRow(ctx, `
 		UPDATE lessons SET is_published=TRUE, visibility=$2 WHERE id=$1
@@ -508,11 +555,15 @@ func (h *LessonHandler) Publish(c *gin.Context) {
 
 // POST /api/v1/lessons/:id/unpublish
 func (h *LessonHandler) Unpublish(c *gin.Context) {
+	ctx := context.Background()
 	id, err := parseID(c, "id")
 	if err != nil {
 		return
 	}
-	h.pool.Exec(context.Background(), `UPDATE lessons SET is_published=FALSE WHERE id=$1`, id)
+	if _, ok := h.requireLessonOwner(c, ctx, id); !ok {
+		return
+	}
+	h.pool.Exec(ctx, `UPDATE lessons SET is_published=FALSE WHERE id=$1`, id)
 	c.Status(http.StatusNoContent)
 }
 
@@ -543,12 +594,15 @@ func (h *LessonHandler) RecordView(c *gin.Context) {
 
 // GET /api/v1/lessons/:id/viewers?search=
 func (h *LessonHandler) ListViewers(c *gin.Context) {
+	ctx := context.Background()
 	id, err := parseID(c, "id")
 	if err != nil {
 		return
 	}
+	if _, ok := h.requireLessonOwner(c, ctx, id); !ok {
+		return
+	}
 	search := c.Query("search")
-	ctx := context.Background()
 
 	type viewerRow struct {
 		UserID    int32  `json:"user_id"`
@@ -591,8 +645,12 @@ type grantAccessReq struct {
 
 // POST /api/v1/lessons/:id/access
 func (h *LessonHandler) GrantAccess(c *gin.Context) {
+	ctx := context.Background()
 	id, err := parseID(c, "id")
 	if err != nil {
+		return
+	}
+	if _, ok := h.requireLessonOwner(c, ctx, id); !ok {
 		return
 	}
 	var req grantAccessReq
@@ -600,7 +658,7 @@ func (h *LessonHandler) GrantAccess(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	h.pool.Exec(context.Background(), `
+	h.pool.Exec(ctx, `
 		INSERT INTO lesson_access (lesson_id, type, ref_id)
 		VALUES ($1, $2, $3)
 		ON CONFLICT DO NOTHING
@@ -610,8 +668,12 @@ func (h *LessonHandler) GrantAccess(c *gin.Context) {
 
 // DELETE /api/v1/lessons/:id/access/:type/:refId
 func (h *LessonHandler) RevokeAccess(c *gin.Context) {
+	ctx := context.Background()
 	id, err := parseID(c, "id")
 	if err != nil {
+		return
+	}
+	if _, ok := h.requireLessonOwner(c, ctx, id); !ok {
 		return
 	}
 	atype := c.Param("type")
@@ -619,7 +681,7 @@ func (h *LessonHandler) RevokeAccess(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	h.pool.Exec(context.Background(), `
+	h.pool.Exec(ctx, `
 		DELETE FROM lesson_access WHERE lesson_id=$1 AND type=$2 AND ref_id=$3
 	`, id, atype, refID)
 	c.Status(http.StatusNoContent)
@@ -627,11 +689,14 @@ func (h *LessonHandler) RevokeAccess(c *gin.Context) {
 
 // GET /api/v1/lessons/:id/access
 func (h *LessonHandler) ListAccess(c *gin.Context) {
+	ctx := context.Background()
 	id, err := parseID(c, "id")
 	if err != nil {
 		return
 	}
-	ctx := context.Background()
+	if _, ok := h.requireLessonOwner(c, ctx, id); !ok {
+		return
+	}
 
 	type accessRow struct {
 		Type  string `json:"type"`
@@ -725,8 +790,12 @@ type createBlockReq struct {
 }
 
 func (h *LessonHandler) CreateBlock(c *gin.Context) {
+	ctx := context.Background()
 	lessonID, err := parseID(c, "id")
 	if err != nil {
+		return
+	}
+	if _, ok := h.requireLessonOwner(c, ctx, lessonID); !ok {
 		return
 	}
 	var req createBlockReq
@@ -734,7 +803,6 @@ func (h *LessonHandler) CreateBlock(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	ctx := context.Background()
 	var maxOrder int16
 	h.pool.QueryRow(ctx, `SELECT COALESCE(MAX(order_num), -1) FROM lesson_blocks WHERE lesson_id=$1`, lessonID).Scan(&maxOrder)
 	var b lessonBlock
@@ -758,8 +826,12 @@ type updateBlockReq struct {
 }
 
 func (h *LessonHandler) UpdateBlock(c *gin.Context) {
+	ctx := context.Background()
 	blockID, err := parseID(c, "blockId")
 	if err != nil {
+		return
+	}
+	if !h.requireBlockOwner(c, ctx, blockID) {
 		return
 	}
 	var req updateBlockReq
@@ -768,7 +840,7 @@ func (h *LessonHandler) UpdateBlock(c *gin.Context) {
 		return
 	}
 	var b lessonBlock
-	err = h.pool.QueryRow(context.Background(), `
+	err = h.pool.QueryRow(ctx, `
 		UPDATE lesson_blocks SET content=$2, language=$3, caption=$4 WHERE id=$1
 		RETURNING id, lesson_id, type, content, COALESCE(language,''), COALESCE(caption,''), order_num
 	`, blockID, req.Content, strOrNil(req.Language), strOrNil(req.Caption)).
@@ -781,11 +853,15 @@ func (h *LessonHandler) UpdateBlock(c *gin.Context) {
 }
 
 func (h *LessonHandler) DeleteBlock(c *gin.Context) {
+	ctx := context.Background()
 	blockID, err := parseID(c, "blockId")
 	if err != nil {
 		return
 	}
-	h.pool.Exec(context.Background(), `DELETE FROM lesson_blocks WHERE id=$1`, blockID)
+	if !h.requireBlockOwner(c, ctx, blockID) {
+		return
+	}
+	h.pool.Exec(ctx, `DELETE FROM lesson_blocks WHERE id=$1`, blockID)
 	c.Status(http.StatusNoContent)
 }
 
@@ -802,9 +878,14 @@ func (h *LessonHandler) ReorderBlocks(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	userID, _ := c.Get("user_id")
 	ctx := context.Background()
 	for _, item := range req.Order {
-		h.pool.Exec(ctx, `UPDATE lesson_blocks SET order_num=$2 WHERE id=$1`, item.ID, item.OrderNum)
+		h.pool.Exec(ctx, `
+			UPDATE lesson_blocks SET order_num=$2
+			WHERE id=$1
+			  AND lesson_id IN (SELECT id FROM lessons WHERE created_by=$3)
+		`, item.ID, item.OrderNum, userID.(int32))
 	}
 	c.Status(http.StatusNoContent)
 }

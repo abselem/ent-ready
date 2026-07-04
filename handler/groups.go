@@ -125,8 +125,19 @@ type addStudentReq struct {
 }
 
 func (h *GroupHandler) AddStudent(c *gin.Context) {
+	ctx := context.Background()
 	groupID, err := parseID(c, "id")
 	if err != nil {
+		return
+	}
+	group, err := h.q.GetGroupByID(ctx, groupID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
+		return
+	}
+	teacherID, _ := c.Get("user_id")
+	if group.TeacherID != teacherID.(int32) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
 		return
 	}
 	var req addStudentReq
@@ -134,7 +145,7 @@ func (h *GroupHandler) AddStudent(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	entry, err := h.q.AddStudentToGroup(context.Background(), db.AddStudentToGroupParams{
+	entry, err := h.q.AddStudentToGroup(ctx, db.AddStudentToGroupParams{
 		UserID:  req.UserID,
 		GroupID: groupID,
 	})
@@ -147,15 +158,26 @@ func (h *GroupHandler) AddStudent(c *gin.Context) {
 
 // DELETE /api/v1/groups/:id/students/:user_id  (teacher removes student)
 func (h *GroupHandler) RemoveStudent(c *gin.Context) {
+	ctx := context.Background()
 	groupID, err := parseID(c, "id")
 	if err != nil {
+		return
+	}
+	group, err := h.q.GetGroupByID(ctx, groupID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
+		return
+	}
+	teacherID, _ := c.Get("user_id")
+	if group.TeacherID != teacherID.(int32) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
 		return
 	}
 	userID, err := parseID(c, "user_id")
 	if err != nil {
 		return
 	}
-	if err := h.q.RemoveStudentFromGroup(context.Background(), db.RemoveStudentFromGroupParams{
+	if err := h.q.RemoveStudentFromGroup(ctx, db.RemoveStudentFromGroupParams{
 		UserID:  userID,
 		GroupID: groupID,
 	}); err != nil {
