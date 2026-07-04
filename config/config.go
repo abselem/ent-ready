@@ -70,6 +70,15 @@ func Load() (*Config, error) {
 		corsOrigins = "http://localhost:3000"
 	}
 
+	accessSecret := os.Getenv("JWT_ACCESS_SECRET")
+	if len(accessSecret) < 32 {
+		return nil, fmt.Errorf("JWT_ACCESS_SECRET must be set and at least 32 characters (got %d)", len(accessSecret))
+	}
+	refreshSecret := os.Getenv("JWT_REFRESH_SECRET")
+	if len(refreshSecret) < 32 {
+		return nil, fmt.Errorf("JWT_REFRESH_SECRET must be set and at least 32 characters (got %d)", len(refreshSecret))
+	}
+
 	dbPort, _ := strconv.Atoi(getEnv("POSTGRES_PORT", "5432"))
 
 	return &Config{
@@ -82,8 +91,8 @@ func Load() (*Config, error) {
 			Password: getEnv("POSTGRES_PASSWORD", ""),
 		},
 		JWT: JWTConfig{
-			AccessSecret:  getEnv("JWT_ACCESS_SECRET", "change_me_access"),
-			RefreshSecret: getEnv("JWT_REFRESH_SECRET", "change_me_refresh"),
+			AccessSecret:  accessSecret,
+			RefreshSecret: refreshSecret,
 			AccessTTL:     15 * time.Minute,
 			RefreshTTL:    7 * 24 * time.Hour,
 		},
