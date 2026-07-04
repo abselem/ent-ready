@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"time"
+
 	"testing-app/config"
 	"testing-app/middleware"
 	"testing-app/notify"
@@ -20,7 +22,8 @@ func NewRouter(pool *pgxpool.Pool, cfg *config.Config, n notify.Sender) *gin.Eng
 		AllowCredentials: true,
 	}))
 
-	auth := NewAuthHandler(pool, cfg, n)
+	authRL := middleware.NewRateLimiter()
+	auth := NewAuthHandler(pool, cfg, n, authRL)
 	users := NewUserHandler(pool, cfg)
 	activity := NewActivityHandler(pool)
 	groups := NewGroupHandler(pool, cfg)
@@ -43,9 +46,9 @@ func NewRouter(pool *pgxpool.Pool, cfg *config.Config, n notify.Sender) *gin.Eng
 	// Публичные маршруты
 	a := v1.Group("/auth")
 	{
-		a.POST("/send-otp", auth.SendOTP)
+		a.POST("/send-otp", middleware.IPLimit(authRL, 5, time.Minute), auth.SendOTP)
 		a.POST("/register", auth.Register)
-		a.POST("/login", auth.Login)
+		a.POST("/login", middleware.IPLimit(authRL, 10, time.Minute), auth.Login)
 		a.POST("/login/otp", auth.LoginOTP)
 		a.POST("/refresh", auth.Refresh)
 		a.POST("/reset-password", auth.ResetPassword)

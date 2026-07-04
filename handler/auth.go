@@ -89,6 +89,12 @@ func (h *AuthHandler) SendOTP(c *gin.Context) {
 	}
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 
+	// 3 OTP per email per 10 minutes — prevents SMS/email provider spam
+	if !h.rl.Allow("otp:"+req.Email, 3, 10*time.Minute) {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Код уже был отправлен. Повторите через 10 минут."})
+		return
+	}
+
 	// For login/reset_password — user must exist
 	if req.Purpose == "login" || req.Purpose == "reset_password" {
 		if _, err := h.getUserByEmail(context.Background(), req.Email); err != nil {
@@ -216,6 +222,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 	req.Identifier = strings.TrimSpace(req.Identifier)
+
+	// 5 login attempts per identifier per minute — prevents bcrypt brute-force
+	if !h.rl.Allow("login:"+strings.ToLower(req.Identifier), 5, time.Minute) {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Слишком много попыток. Повторите через минуту."})
+		return
+	}
 
 	var user db.User
 	var err error

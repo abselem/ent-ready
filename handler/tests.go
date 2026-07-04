@@ -920,23 +920,65 @@ func (h *TestHandler) ListTests(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	tests, err := h.q.GetTestsByGroup(context.Background(), pgtype.Int4{Int32: groupID, Valid: true})
+	limit, offset := parsePagination(c)
+	pgRows, err := h.pool.Query(context.Background(), `
+		SELECT id, group_id, title, description, time_limit, max_attempts, is_published,
+		       created_at, updated_at, is_public, created_by, deadline, topic_id
+		FROM tests WHERE group_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
+	`, groupID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
-	c.JSON(http.StatusOK, tests)
+	defer pgRows.Close()
+	items := []db.Test{}
+	for pgRows.Next() {
+		var t db.Test
+		if err := pgRows.Scan(&t.ID, &t.GroupID, &t.Title, &t.Description, &t.TimeLimit,
+			&t.MaxAttempts, &t.IsPublished, &t.CreatedAt, &t.UpdatedAt,
+			&t.IsPublic, &t.CreatedBy, &t.Deadline, &t.TopicID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
+		items = append(items, t)
+	}
+	if err := pgRows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	c.JSON(http.StatusOK, items)
 }
 
 // GET /api/v1/tests/mine — все тесты учителя
 func (h *TestHandler) ListMyTests(c *gin.Context) {
 	userID, _ := c.Get("user_id")
-	tests, err := h.q.GetTestsByCreator(context.Background(), pgtype.Int4{Int32: userID.(int32), Valid: true})
+	limit, offset := parsePagination(c)
+	pgRows, err := h.pool.Query(context.Background(), `
+		SELECT id, group_id, title, description, time_limit, max_attempts, is_published,
+		       created_at, updated_at, is_public, created_by, deadline, topic_id
+		FROM tests WHERE created_by = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
+	`, userID.(int32), limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
-	c.JSON(http.StatusOK, tests)
+	defer pgRows.Close()
+	items := []db.Test{}
+	for pgRows.Next() {
+		var t db.Test
+		if err := pgRows.Scan(&t.ID, &t.GroupID, &t.Title, &t.Description, &t.TimeLimit,
+			&t.MaxAttempts, &t.IsPublished, &t.CreatedAt, &t.UpdatedAt,
+			&t.IsPublic, &t.CreatedBy, &t.Deadline, &t.TopicID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
+		items = append(items, t)
+	}
+	if err := pgRows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	c.JSON(http.StatusOK, items)
 }
 
 // GET /api/v1/tests/public
@@ -989,8 +1031,31 @@ func (h *TestHandler) GetTestResults(c *gin.Context) {
 		}
 	}
 
-	rows, err := h.q.GetTestResults(ctx, id)
+	limit, offset := parsePagination(c)
+	pgRows, err := h.pool.Query(ctx, `
+		SELECT u.id AS user_id, u.first_name, u.last_name,
+		       ta.id AS attempt_id, ta.score, ta.max_score, ta.finished_at
+		FROM test_attempts ta
+		JOIN users u ON u.id = ta.user_id
+		WHERE ta.test_id = $1 AND ta.finished_at IS NOT NULL
+		ORDER BY ta.score DESC, ta.finished_at ASC
+		LIMIT $2 OFFSET $3
+	`, id, limit, offset)
 	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	defer pgRows.Close()
+	rows := []db.GetTestResultsRow{}
+	for pgRows.Next() {
+		var r db.GetTestResultsRow
+		if err := pgRows.Scan(&r.UserID, &r.FirstName, &r.LastName, &r.AttemptID, &r.Score, &r.MaxScore, &r.FinishedAt); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
+		rows = append(rows, r)
+	}
+	if err := pgRows.Err(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
@@ -1433,10 +1498,37 @@ func (h *TestHandler) AttemptReview(c *gin.Context) {
 // GET /api/v1/attempts/my — история попыток текущего пользователя
 func (h *TestHandler) ListMyAttempts(c *gin.Context) {
 	userID, _ := c.Get("user_id")
-	rows, err := h.q.GetFinishedAttemptsByUser(context.Background(), userID.(int32))
+	limit, offset := parsePagination(c)
+	pgRows, err := h.pool.Query(context.Background(), `
+		SELECT ta.id, ta.test_id, t.title AS test_title,
+		       ta.score, ta.max_score, ta.started_at, ta.finished_at,
+		       t.topic_id, tp.name AS topic_name
+		FROM test_attempts ta
+		JOIN tests t ON t.id = ta.test_id
+		LEFT JOIN topics tp ON tp.id = t.topic_id
+		WHERE ta.user_id = $1 AND ta.finished_at IS NOT NULL
+		ORDER BY ta.finished_at DESC
+		LIMIT $2 OFFSET $3
+	`, userID.(int32), limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
-	c.JSON(http.StatusOK, rows)
+	defer pgRows.Close()
+	items := []db.GetFinishedAttemptsByUserRow{}
+	for pgRows.Next() {
+		var i db.GetFinishedAttemptsByUserRow
+		if err := pgRows.Scan(&i.ID, &i.TestID, &i.TestTitle,
+			&i.Score, &i.MaxScore, &i.StartedAt, &i.FinishedAt,
+			&i.TopicID, &i.TopicName); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
+		items = append(items, i)
+	}
+	if err := pgRows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	c.JSON(http.StatusOK, items)
 }

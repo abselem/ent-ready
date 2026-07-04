@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -27,6 +28,19 @@ func saveUploadedImage(file io.Reader, originalName, subdir string) (string, err
 	if !allowedImageExts[ext] {
 		return "", fmt.Errorf("допустимые форматы: jpg, png, gif, webp")
 	}
+
+	// Validate actual content via magic bytes — extension alone is not trustworthy
+	var header [512]byte
+	n, err := io.ReadFull(file, header[:])
+	if err != nil && err != io.ErrUnexpectedEOF {
+		return "", fmt.Errorf("не удалось прочитать файл")
+	}
+	mime := http.DetectContentType(header[:n])
+	if !strings.HasPrefix(mime, "image/") {
+		return "", fmt.Errorf("файл не является изображением")
+	}
+	// Reconstruct reader so the already-read header bytes are not lost
+	file = io.MultiReader(bytes.NewReader(header[:n]), file)
 
 	dir := filepath.Join("./static/uploads", subdir)
 	if err := os.MkdirAll(dir, 0755); err != nil {

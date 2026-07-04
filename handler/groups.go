@@ -15,11 +15,12 @@ import (
 )
 
 type GroupHandler struct {
-	q db.Querier
+	q    db.Querier
+	pool *pgxpool.Pool
 }
 
 func NewGroupHandler(pool *pgxpool.Pool, _ *config.Config) *GroupHandler {
-	return &GroupHandler{q: db.New(pool)}
+	return &GroupHandler{q: db.New(pool), pool: pool}
 }
 
 const inviteCodeChars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -111,8 +112,35 @@ func (h *GroupHandler) ListStudents(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	students, err := h.q.GetStudentsByGroup(context.Background(), id)
+	limit, offset := parsePagination(c)
+	pgRows, err := h.pool.Query(context.Background(), `
+		SELECT u.id, u.phone, u.first_name, u.last_name, u.middle_name, u.city,
+		       u.role_id, u.password_hash, u.telegram_chat_id, u.is_banned,
+		       u.created_at, u.updated_at, u.profile_subject1, u.profile_subject2, u.avatar_url
+		FROM users u
+		JOIN user_groups ug ON ug.user_id = u.id
+		WHERE ug.group_id = $1
+		ORDER BY u.last_name, u.first_name
+		LIMIT $2 OFFSET $3
+	`, id, limit, offset)
 	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	defer pgRows.Close()
+	students := []db.User{}
+	for pgRows.Next() {
+		var u db.User
+		if err := pgRows.Scan(&u.ID, &u.Phone, &u.FirstName, &u.LastName,
+			&u.MiddleName, &u.City, &u.RoleID, &u.PasswordHash,
+			&u.TelegramChatID, &u.IsBanned, &u.CreatedAt, &u.UpdatedAt,
+			&u.ProfileSubject1, &u.ProfileSubject2, &u.AvatarUrl); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
+		students = append(students, u)
+	}
+	if err := pgRows.Err(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
