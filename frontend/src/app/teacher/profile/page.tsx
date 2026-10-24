@@ -2,9 +2,8 @@
 
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, signOut } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
-import { clearTokens } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +16,7 @@ export default function TeacherProfilePage() {
   const [firstName, setFirstName] = useState(user?.first_name ?? "");
   const [lastName, setLastName] = useState(user?.last_name ?? "");
   const [newPassword, setNewPassword] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
 
@@ -32,18 +32,18 @@ export default function TeacherProfilePage() {
   });
 
   const setPassword = useMutation({
-    mutationFn: () => api.post("/users/me/password", { password: newPassword }),
+    mutationFn: () => api.post("/users/me/password", { password: newPassword, current_password: currentPassword }),
     onSuccess: () => {
       setNewPassword("");
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
+      setCurrentPassword("");
+      logout();
+      router.push("/login");
     },
     onError: () => setError("Не удалось сменить пароль"),
   });
 
-  function handleLogout() {
-    clearTokens();
-    logout();
+  async function handleLogout() {
+    await signOut();
     router.push("/login");
   }
 
@@ -86,6 +86,8 @@ export default function TeacherProfilePage() {
         <CardHeader><CardTitle>Сменить пароль</CardTitle></CardHeader>
         <CardContent>
           <div className="flex flex-col gap-3">
+            <Input id="current-password" label="Текущий пароль" type="password" autoComplete="current-password"
+              value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
             <Input
               id="password"
               label="Новый пароль"
@@ -97,7 +99,7 @@ export default function TeacherProfilePage() {
             <Button
               variant="outline"
               loading={setPassword.isPending}
-              disabled={newPassword.length < 6}
+              disabled={newPassword.length < 8 || !currentPassword}
               onClick={() => setPassword.mutate()}
             >
               Сменить пароль

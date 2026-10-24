@@ -1,169 +1,114 @@
 "use client";
 
+import Link from "next/link";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
 import { Button } from "@/components/ui/button";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 
+interface Topic { id: number; name: string }
 interface ENTAttempt {
   id: number;
   started_at: string;
   finished_at: string | null;
-  subject3_id: number | null;
-  subject4_id: number | null;
   subject3_name: string;
   subject4_name: string;
-  score1: number | null;
-  score2: number | null;
-  score3: number | null;
-  score4: number | null;
-  score5: number | null;
   total_score: number;
   total_max: number;
 }
 
-const SLOT_LABELS = ["Мат. грамотность", "История Казахстана", "", "", "Грамот. чтения"];
-const SLOT_MAX = [10, 20, 50, 50, 10];
+function formatDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Дата не указана" : date.toLocaleString("ru-RU", {
+    day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit",
+  });
+}
 
 export default function ENTPage() {
   const router = useRouter();
   const { user } = useAuthStore();
   const hasSubjects = !!(user?.profile_subject1 && user?.profile_subject2);
-
-  const { data: attempts = [], isLoading, refetch } = useQuery<ENTAttempt[]>({
-    queryKey: ["ent-attempts"],
-    queryFn: async () => (await api.get("/ent/attempts/my")).data,
+  const topicsQuery = useQuery<Topic[]>({
+    queryKey: ["topics"],
+    queryFn: async () => (await api.get("/topics")).data ?? [],
   });
-
+  const historyQuery = useQuery<ENTAttempt[]>({
+    queryKey: ["ent-attempts"],
+    queryFn: async () => (await api.get("/ent/attempts/my")).data ?? [],
+  });
   const startQuiz = useMutation({
     mutationFn: () => api.post("/ent/start"),
-    onSuccess: (res) => {
-      router.push(`/student/ent/${res.data.attempt.id}`);
-    },
+    onSuccess: (response) => router.push(`/student/ent/${response.data.attempt.id}`),
   });
-
-  function formatDate(ts: string) {
-    return new Date(ts).toLocaleString("ru-RU", {
-      day: "2-digit", month: "2-digit", year: "numeric",
-      hour: "2-digit", minute: "2-digit",
-    });
-  }
-
-  function pct(score: number, max: number) {
-    if (!max) return 0;
-    return Math.round((score / max) * 100);
-  }
+  const subjectName = (id: number | null | undefined, fallback: string) =>
+    topicsQuery.data?.find((topic) => topic.id === id)?.name ?? fallback;
+  const composition = [
+    { name: "Математическая грамотность", detail: "Обязательный предмет" },
+    { name: "История Казахстана", detail: "Обязательный предмет" },
+    { name: "Грамотность чтения", detail: "Обязательный предмет" },
+    { name: subjectName(user?.profile_subject1, "Первый профильный предмет"), detail: user?.profile_subject1 ? "Выбран в профиле" : "Выберите в профиле" },
+    { name: subjectName(user?.profile_subject2, "Второй профильный предмет"), detail: user?.profile_subject2 ? "Выбран в профиле" : "Выберите в профиле" },
+  ];
 
   return (
-    <div className="p-4 md:p-6 max-w-2xl mx-auto">
-      <h1 className="text-2xl font-bold mb-2">ЕНТ Пробный тест</h1>
-      <p className="text-sm text-muted-foreground mb-6">
-        120 вопросов · 5 предметов · 240 минут
-      </p>
+    <div className="mx-auto max-w-4xl space-y-8 p-4 md:p-8">
+      <header className="space-y-2">
+        <p className="text-sm font-medium text-primary">Подготовка к экзамену</p>
+        <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">Пробный ЕНТ</h1>
+        <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">Практика по обязательным и выбранным профильным предметам. Результаты попыток сохраняются в истории.</p>
+      </header>
 
-      {/* Structure info */}
-      <Card className="mb-6">
-        <CardContent className="pt-4">
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            {[
-              { name: "Мат. грамотность",   max: 10 },
-              { name: "История Казахстана", max: 20 },
-              { name: "Грамотность чтения", max: 10 },
-              { name: "Профильный 1",       max: 50 },
-              { name: "Профильный 2",       max: 50 },
-            ].map((s) => (
-              <div key={s.name} className="border border-border rounded-lg p-3">
-                <p className="font-medium text-sm">{s.name}</p>
-                <p className="text-xs font-semibold text-primary mt-1">макс. {s.max} б.</p>
-              </div>
-            ))}
-          </div>
-          <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground border-t border-border pt-3">
-            <span>Итого вопросов: <b className="text-foreground">120</b></span>
-            <span className="flex items-center gap-2">
-              <span>⏱ <b className="text-foreground">240 мин</b></span>
-              <span>Макс. баллов: <b className="text-foreground">140</b></span>
-            </span>
-          </div>
-        </CardContent>
-      </Card>
-
-      {!hasSubjects && (
-        <div className="mb-4 p-3 rounded-lg border border-yellow-300 bg-yellow-50 dark:bg-yellow-950/30 text-sm text-yellow-800 dark:text-yellow-300">
-          Для старта теста выберите два профильных предмета в{" "}
-          <button className="underline font-medium" onClick={() => router.push("/student/profile")}>
-            профиле
-          </button>
-          .
+      <section aria-labelledby="composition-title" className="overflow-hidden rounded-2xl border border-border bg-card">
+        <div className="border-b border-border p-5 md:p-6"><h2 id="composition-title" className="text-xl font-semibold">Состав пробного теста</h2><p className="mt-2 text-sm leading-relaxed text-muted-foreground">Набор вопросов формируется из доступного банка. Фактическое количество и максимальный балл зависят от выбранных вопросов.</p></div>
+        <ol className="divide-y divide-border">
+          {composition.map((subject, index) => (
+            <li key={index} className="flex items-center gap-4 px-5 py-4 md:px-6">
+              <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-sm font-medium text-primary">{index + 1}</span>
+              <div className="min-w-0"><p className="break-words text-sm font-medium">{subject.name}</p><p className="mt-0.5 text-xs text-muted-foreground">{subject.detail}</p></div>
+            </li>
+          ))}
+        </ol>
+        <div className="space-y-4 border-t border-border p-5 md:p-6">
+          {topicsQuery.isPending && <p role="status" className="text-sm text-muted-foreground">Загружаем названия профильных предметов…</p>}
+          {topicsQuery.isError && <div role="alert" className="text-sm"><p className="text-destructive">Не удалось загрузить названия предметов. Ваш выбор в профиле сохранён.</p><Button variant="ghost" onClick={() => void topicsQuery.refetch()}>Повторить загрузку</Button></div>}
+          {!hasSubjects ? (
+            <div className="rounded-xl border border-border bg-muted/40 p-4"><p className="text-sm font-medium">Сначала выберите два профильных предмета</p><p className="mt-1 text-sm leading-relaxed text-muted-foreground">Они определяют состав вашей тренировки.</p><Link href="/student/profile" className="mt-3 inline-flex min-h-11 items-center font-medium text-primary underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">Выбрать предметы в профиле →</Link></div>
+          ) : <Link href="/student/profile" className="inline-flex min-h-11 items-center text-sm font-medium text-primary underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">Изменить профильные предметы</Link>}
+          {startQuiz.isError && <p role="alert" className="rounded-xl border border-destructive/30 p-4 text-sm text-destructive">Не удалось начать пробный тест. Проверьте соединение и попробуйте ещё раз.</p>}
+          <Button className="min-h-11 w-full sm:w-auto" disabled={!hasSubjects || startQuiz.isPending} loading={startQuiz.isPending} onClick={() => startQuiz.mutate()}>{startQuiz.isPending ? "Создаём попытку…" : "Начать пробный ЕНТ"}</Button>
         </div>
-      )}
+      </section>
 
-      <Button
-        className="w-full mb-8"
-        disabled={!hasSubjects || startQuiz.isPending}
-        loading={startQuiz.isPending}
-        onClick={() => startQuiz.mutate()}
-      >
-        Начать пробный ЕНТ
-      </Button>
-
-      {/* History */}
-      <h2 className="text-lg font-semibold mb-3">История попыток</h2>
-      {isLoading ? (
-        <div className="text-center text-muted-foreground py-8">Загрузка...</div>
-      ) : attempts.length === 0 ? (
-        <div className="text-center text-muted-foreground py-8">Нет попыток</div>
-      ) : (
-        <div className="flex flex-col gap-3">
-          {attempts.map((a) => {
-            const finished = !!a.finished_at;
-            const p = pct(a.total_score, a.total_max);
-            return (
-              <Card key={a.id}
-                className="cursor-pointer hover:border-primary transition-colors"
-                onClick={() => finished ? router.push(`/student/ent/${a.id}/result`) : router.push(`/student/ent/${a.id}`)}>
-                <CardHeader>
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <CardTitle className="text-sm font-medium">
-                        {a.subject3_name} · {a.subject4_name}
-                      </CardTitle>
-                      <p className="text-xs text-muted-foreground mt-0.5">{formatDate(a.started_at)}</p>
-                    </div>
-                    {finished ? (
-                      <span className={`text-sm font-bold shrink-0 ${p >= 80 ? "text-green-600" : p >= 50 ? "text-yellow-600" : "text-destructive"}`}>
-                        {a.total_score}/{a.total_max}
-                      </span>
-                    ) : (
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700">В процессе</span>
-                    )}
+      <section aria-labelledby="history-title" className="space-y-4">
+        <div><h2 id="history-title" className="text-xl font-semibold">История попыток</h2><p className="mt-1 text-sm text-muted-foreground">Вернитесь к результатам или продолжите незавершённую попытку.</p></div>
+        {historyQuery.isPending ? (
+          <p role="status" className="rounded-2xl border border-border bg-card p-6 text-sm text-muted-foreground">Загружаем историю…</p>
+        ) : historyQuery.isError ? (
+          <div role="alert" className="rounded-2xl border border-destructive/30 bg-card p-6"><p className="mb-3 text-sm text-destructive">Не удалось загрузить историю попыток.</p><Button variant="outline" onClick={() => void historyQuery.refetch()}>Повторить загрузку</Button></div>
+        ) : (historyQuery.data ?? []).length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-border bg-card p-6"><p className="font-medium">Пока нет попыток</p><p className="mt-1 text-sm text-muted-foreground">После первой тренировки здесь появится её результат.</p></div>
+        ) : (
+          <div className="space-y-3">
+            {historyQuery.data?.map((attempt) => {
+              const finished = !!attempt.finished_at;
+              const percentage = attempt.total_max > 0 ? Math.round(attempt.total_score / attempt.total_max * 100) : null;
+              return (
+                <article key={attempt.id} className="rounded-2xl border border-border bg-card p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0"><h3 className="break-words text-base font-medium">{attempt.subject3_name || "Первый профильный предмет"} · {attempt.subject4_name || "Второй профильный предмет"}</h3><p className="mt-1 text-xs text-muted-foreground">Начало: <time dateTime={attempt.started_at}>{formatDate(attempt.started_at)}</time></p></div>
+                    <span className="rounded-lg bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">{finished ? "Завершён" : "В процессе"}</span>
                   </div>
-                </CardHeader>
-                {finished && (
-                  <CardContent>
-                    <div className="h-1.5 bg-muted rounded-full mb-2">
-                      <div className={`h-full rounded-full ${p >= 80 ? "bg-green-500" : p >= 50 ? "bg-yellow-500" : "bg-destructive"}`}
-                        style={{ width: `${p}%` }} />
-                    </div>
-                    <div className="grid grid-cols-5 gap-1 text-xs text-center">
-                      {[a.score1, a.score2, a.score3, a.score4, a.score5].map((s, i) => (
-                        <div key={i} className="bg-muted/50 rounded px-1 py-1">
-                          <p className="text-muted-foreground truncate">
-                            {i === 2 ? a.subject3_name : i === 3 ? a.subject4_name : SLOT_LABELS[i]}
-                          </p>
-                          <p className="font-semibold">{s ?? 0}/{SLOT_MAX[i]}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                )}
-              </Card>
-            );
-          })}
-        </div>
-      )}
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-4 border-t border-border pt-4">
+                    {finished ? <div><p className="font-semibold tabular-nums">{attempt.total_score} / {attempt.total_max} баллов</p>{percentage !== null && <p className="mt-1 text-xs text-muted-foreground">{percentage}% от максимального балла</p>}</div> : <p className="text-sm text-muted-foreground">Попытка ещё не завершена</p>}
+                    <Link href={finished ? `/student/ent/${attempt.id}/result` : `/student/ent/${attempt.id}`} className="inline-flex min-h-11 items-center justify-center rounded-xl border border-border px-4 text-sm font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">{finished ? "Посмотреть результат" : "Продолжить попытку"}<span aria-hidden="true" className="ml-3">→</span></Link>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

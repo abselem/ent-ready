@@ -9,6 +9,7 @@ import { MathText } from "@/components/math-text";
 interface Topic { id: number; name: string }
 interface Subtopic { id: number; topic_id: number; name: string }
 interface BankQuestion {
+  allow_generation: boolean;
   id: number; text: string; difficulty: number; question_type: string;
   explanation: string | null; image_url: string | null; explanation_image_url: string | null;
   topic_id: number | null; subtopic_id: number | null;
@@ -774,6 +775,7 @@ export default function QuestionBankPage() {
   const [importMode, setImportMode] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
+  const [allowGeneration, setAllowGeneration] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   // Single/multi/matching state
@@ -818,6 +820,7 @@ export default function QuestionBankPage() {
   });
 
   function resetForm() {
+    setAllowGeneration(false);
     setText(""); setQtype("single"); setDifficulty(1); setTopicId(""); setSubtopicId("");
     setExplanation(""); setImageUrl(""); setExplanationImageUrl("");
     setOptions(DEFAULT_OPTIONS); setPairs(DEFAULT_PAIRS); setEditId(null);
@@ -843,6 +846,7 @@ export default function QuestionBankPage() {
 
   const createQuestion = useMutation({
     mutationFn: () => api.post("/questions", {
+      allow_generation: allowGeneration,
       text, difficulty, question_type: qtype,
       topic_id: topicId || null, subtopic_id: subtopicId || null,
       explanation: explanation || null,
@@ -875,6 +879,7 @@ export default function QuestionBankPage() {
 
   const updateQuestion = useMutation({
     mutationFn: (id: number) => api.put(`/questions/${id}`, {
+      allow_generation: allowGeneration,
       text, difficulty, question_type: qtype,
       topic_id: topicId || null, subtopic_id: subtopicId || null,
       explanation: explanation || null,
@@ -1038,6 +1043,13 @@ export default function QuestionBankPage() {
                   )}
                 </div>
 
+                <label className="flex items-start gap-2 text-sm">
+                  <input type="checkbox" checked={allowGeneration}
+                    onChange={e => setAllowGeneration(e.target.checked)} className="mt-1" />
+                  <span>Разрешить использовать вопрос в общих тренировках и ЕНТ.
+                    <span className="block text-xs text-muted-foreground">Учащиеся смогут получить этот вопрос и увидеть ответ при разборе тренировки.</span>
+                  </span>
+                </label>
                 <div className="flex gap-2 pt-1">
                   <Button className="flex-1" disabled={!ctxValid}
                     loading={createContext.isPending}
@@ -1213,7 +1225,7 @@ export default function QuestionBankPage() {
                 </div>
                 <div className="flex gap-1 shrink-0">
                   <Button size="sm" variant="outline" onClick={() => {
-                    setEditId(q.id); setText(q.text);
+                    setEditId(q.id); setText(q.text); setAllowGeneration(q.allow_generation ?? false);
                     setQtype((q.question_type as "single"|"multi"|"matching") || "single");
                     setDifficulty((q.difficulty as 1|2|3) || 1);
                     setTopicId(q.topic_id ?? ""); setSubtopicId(q.subtopic_id ?? "");

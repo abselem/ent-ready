@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, clearTokens, apiOrigin } from "@/lib/api";
+import { api, apiOrigin, signOut } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -13,11 +13,11 @@ interface Topic { id: number; name: string }
 interface Group { id: number; name: string; city: string; school: string; invite_code: string }
 interface UserFull {
   id: number;
-  phone: { String: string; Valid: boolean } | null;
-  email: { String: string; Valid: boolean } | null;
+  phone: string | null;
+  email: string | null;
   first_name: string; last_name: string;
   profile_subject1: number | null; profile_subject2: number | null;
-  avatar_url: { String: string; Valid: boolean } | null;
+  avatar_url: string | null;
 }
 interface ActivityData {
   days: { date: string; count: number }[];
@@ -142,6 +142,7 @@ export default function StudentProfilePage() {
   const [phone, setPhone] = useState("");
   const [phoneSaved, setPhoneSaved] = useState(false);
   const [newPassword, setNewPassword] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [avatarUploading, setAvatarUploading] = useState(false);
@@ -174,12 +175,12 @@ export default function StudentProfilePage() {
     if (meFull) {
       setSub1(meFull.profile_subject1 ?? "");
       setSub2(meFull.profile_subject2 ?? "");
-      setPhone(meFull.phone?.Valid ? meFull.phone.String : "");
+      setPhone(meFull.phone ?? "");
     }
   }, [meFull]);
 
-  const phoneValue = meFull?.phone?.Valid ? meFull.phone.String : "";
-  const emailValue = meFull?.email?.Valid ? meFull.email.String : "";
+  const phoneValue = meFull?.phone ?? "";
+  const emailValue = meFull?.email ?? "";
   const hasPhone = !!phoneValue;
 
   const updatePhone = useMutation({
@@ -192,7 +193,7 @@ export default function StudentProfilePage() {
   });
 
   const avatarSrc = (() => {
-    const raw = meFull?.avatar_url?.Valid ? meFull.avatar_url.String : null;
+    const raw = meFull?.avatar_url ?? null;
     return raw ? (raw.startsWith("/static/") ? `${apiOrigin}${raw}` : raw) : null;
   })();
 
@@ -229,8 +230,8 @@ export default function StudentProfilePage() {
   });
 
   const setPassword = useMutation({
-    mutationFn: () => api.post("/users/me/password", { password: newPassword }),
-    onSuccess: () => { setNewPassword(""); setSaved(true); setTimeout(() => setSaved(false), 2000); },
+    mutationFn: () => api.post("/users/me/password", { password: newPassword, current_password: currentPassword }),
+    onSuccess: () => { setNewPassword(""); setCurrentPassword(""); logout(); router.push("/login"); },
     onError: () => setError("Не удалось сменить пароль"),
   });
 
@@ -416,15 +417,17 @@ export default function StudentProfilePage() {
         <CardHeader><CardTitle>Сменить пароль</CardTitle></CardHeader>
         <CardContent>
           <div className="flex flex-col gap-3">
+            <Input id="current-password" label="Текущий пароль" type="password" autoComplete="current-password"
+              value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
             <Input id="password" label="Новый пароль" type="password" placeholder="••••••••"
               value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
             <Button variant="outline" loading={setPassword.isPending}
-              disabled={newPassword.length < 6} onClick={() => setPassword.mutate()}>Сменить пароль</Button>
+              disabled={newPassword.length < 8 || !currentPassword} onClick={() => setPassword.mutate()}>Сменить пароль</Button>
           </div>
         </CardContent>
       </Card>
 
-      <Button variant="ghost" className="w-full text-destructive" onClick={() => { clearTokens(); logout(); router.push("/login"); }}>
+      <Button variant="ghost" className="w-full text-destructive" onClick={async () => { await signOut(); router.push("/login"); }}>
         Выйти из аккаунта
       </Button>
     </div>

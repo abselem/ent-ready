@@ -140,6 +140,9 @@ func (h *TestHandler) CreateTest(c *gin.Context) {
 		topicID = pgtype.Int4{Int32: *req.TopicID, Valid: true}
 	}
 
+	if groupID.Valid && !requireGroupRead(c, h.pool, groupID.Int32, true) {
+		return
+	}
 	userID, _ := c.Get("user_id")
 	test, err := h.q.CreateTest(context.Background(), db.CreateTestParams{
 		GroupID:     groupID,
@@ -170,8 +173,14 @@ func (h *TestHandler) canSeeResults(ctx context.Context, test db.Test) bool {
 		return true
 	}
 	// Все студенты группы сдали?
-	total, _ := h.q.CountGroupStudents(ctx, test.GroupID.Int32)
-	finished, _ := h.q.CountFinishedAttempts(ctx, test.ID)
+	total, err := h.q.CountGroupStudents(ctx, test.GroupID.Int32)
+	if err != nil {
+		return false
+	}
+	finished, err := h.q.CountFinishedAttempts(ctx, test.ID)
+	if err != nil {
+		return false
+	}
 	return total > 0 && finished >= total
 }
 
@@ -271,17 +280,18 @@ func (h *TestHandler) DeleteTest(c *gin.Context) {
 
 // POST /api/v1/tests/:id/questions
 type createQuestionReq struct {
-	Text                 string  `json:"text" binding:"required"`
-	OrderNum             int16   `json:"order_num"`
-	Points               int16   `json:"points"`
-	TopicID              *int32  `json:"topic_id"`
-	SubtopicID           *int32  `json:"subtopic_id"`
-	Explanation          *string `json:"explanation"`
-	ExplanationImageUrl  *string `json:"explanation_image_url"`
-	Difficulty           int16   `json:"difficulty"`
-	ImageUrl             *string `json:"image_url"`
-	QuestionType         string  `json:"question_type"` // single | multi | matching
-	Options              []struct {
+	AllowGeneration     bool    `json:"allow_generation"`
+	Text                string  `json:"text" binding:"required"`
+	OrderNum            int16   `json:"order_num"`
+	Points              int16   `json:"points"`
+	TopicID             *int32  `json:"topic_id"`
+	SubtopicID          *int32  `json:"subtopic_id"`
+	Explanation         *string `json:"explanation"`
+	ExplanationImageUrl *string `json:"explanation_image_url"`
+	Difficulty          int16   `json:"difficulty"`
+	ImageUrl            *string `json:"image_url"`
+	QuestionType        string  `json:"question_type"` // single | multi | matching
+	Options             []struct {
 		Text      string `json:"text"`
 		IsCorrect bool   `json:"is_correct"`
 		MatchText string `json:"match_text"` // for matching type
@@ -335,10 +345,17 @@ func (h *TestHandler) CreateQuestion(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
+	if _, err := h.pool.Exec(ctx, `UPDATE questions SET generation_allowed=$2 WHERE id=$1`, q.ID, req.AllowGeneration); err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
 	_ = h.q.AddQuestionToTest(ctx, db.AddQuestionToTestParams{
 		TestID: testID, QuestionID: q.ID, OrderNum: int16(count),
 	})
-	c.JSON(http.StatusCreated, q)
+	c.JSON(http.StatusCreated, struct {
+		db.Question
+		AllowGeneration bool `json:"allow_generation"`
+	}{q, req.AllowGeneration})
 }
 
 // POST /api/v1/questions — создать вопрос в банке без привязки к тесту
@@ -372,13 +389,13 @@ func (h *TestHandler) CreateBankQuestion(c *gin.Context) {
 	var qID int32
 	err := h.pool.QueryRow(ctx, `
 		INSERT INTO questions (text, points, difficulty, owner_id, topic_id, subtopic_id,
-		                       explanation, explanation_image_url, image_url, question_type, order_num)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0)
+		                       explanation, explanation_image_url, image_url, question_type, order_num, generation_allowed)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0,$11)
 		RETURNING id
 	`, req.Text, req.Points, bdiff, userID.(int32),
 		req.TopicID, req.SubtopicID,
 		nilStr(req.Explanation), nilStr(req.ExplanationImageUrl),
-		nilStr(req.ImageUrl), qtype,
+		nilStr(req.ImageUrl), qtype, req.AllowGeneration,
 	).Scan(&qID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
@@ -407,14 +424,15 @@ func (h *TestHandler) CreateBankQuestion(c *gin.Context) {
 		MatchText *string `json:"match_text,omitempty"`
 	}
 	type qResp struct {
-		ID           int32    `json:"id"`
-		Text         string   `json:"text"`
-		QuestionType string   `json:"question_type"`
-		Difficulty   int16    `json:"difficulty"`
-		ImageUrl     *string  `json:"image_url"`
-		Options      []optRow `json:"options"`
+		AllowGeneration bool     `json:"allow_generation"`
+		ID              int32    `json:"id"`
+		Text            string   `json:"text"`
+		QuestionType    string   `json:"question_type"`
+		Difficulty      int16    `json:"difficulty"`
+		ImageUrl        *string  `json:"image_url"`
+		Options         []optRow `json:"options"`
 	}
-	resp := qResp{ID: qID, Text: req.Text, QuestionType: qtype, Difficulty: bdiff, ImageUrl: nilStr(req.ImageUrl)}
+	resp := qResp{AllowGeneration: req.AllowGeneration, ID: qID, Text: req.Text, QuestionType: qtype, Difficulty: bdiff, ImageUrl: nilStr(req.ImageUrl)}
 	rows, _ := h.pool.Query(ctx,
 		`SELECT id, text, is_correct, match_text FROM answer_options WHERE question_id=$1 ORDER BY order_num`, qID)
 	if rows != nil {
@@ -435,6 +453,7 @@ func (h *TestHandler) ListMyQuestions(c *gin.Context) {
 	uid := userID.(int32)
 
 	type qRow struct {
+		AllowGeneration     bool    `json:"allow_generation"`
 		ID                  int32   `json:"id"`
 		Text                string  `json:"text"`
 		Difficulty          int16   `json:"difficulty"`
@@ -452,7 +471,7 @@ func (h *TestHandler) ListMyQuestions(c *gin.Context) {
 		SELECT q.id, q.text, q.difficulty, q.question_type,
 		       q.explanation, q.image_url, q.explanation_image_url,
 		       q.topic_id, q.subtopic_id,
-		       t.name AS topic_name, s.name AS subtopic_name
+		       t.name AS topic_name, s.name AS subtopic_name, q.generation_allowed
 		FROM questions q
 		LEFT JOIN topics t ON t.id = q.topic_id
 		LEFT JOIN subtopics s ON s.id = q.subtopic_id
@@ -470,7 +489,7 @@ func (h *TestHandler) ListMyQuestions(c *gin.Context) {
 		var r qRow
 		rows.Scan(&r.ID, &r.Text, &r.Difficulty, &r.QuestionType,
 			&r.Explanation, &r.ImageUrl, &r.ExplanationImageUrl,
-			&r.TopicID, &r.SubtopicID, &r.TopicName, &r.SubtopicName)
+			&r.TopicID, &r.SubtopicID, &r.TopicName, &r.SubtopicName, &r.AllowGeneration)
 		result = append(result, r)
 	}
 	c.JSON(http.StatusOK, result)
@@ -478,9 +497,9 @@ func (h *TestHandler) ListMyQuestions(c *gin.Context) {
 
 // POST /api/v1/question-contexts — создать контекстный блок с вопросами
 type contextSubQReq struct {
-	Text         string `json:"text"`
-	QuestionType string `json:"question_type"`
-	Difficulty   int16  `json:"difficulty"`
+	Text         string  `json:"text"`
+	QuestionType string  `json:"question_type"`
+	Difficulty   int16   `json:"difficulty"`
 	ImageUrl     *string `json:"image_url"`
 	Options      []struct {
 		Text      string `json:"text"`
@@ -659,6 +678,9 @@ func (h *TestHandler) LinkQuestionToTest(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if !h.requireQuestionOwner(c, ctx, req.QuestionID) {
+		return
+	}
 	count, _ := h.q.CountQuestionsInTest(ctx, testID)
 	err = h.q.AddQuestionToTest(ctx, db.AddQuestionToTestParams{
 		TestID: testID, QuestionID: req.QuestionID, OrderNum: int16(count),
@@ -758,13 +780,14 @@ func (h *TestHandler) CreateSubtopic(c *gin.Context) {
 
 // PUT /api/v1/questions/:id
 type updateQuestionReq struct {
-	Text        string  `json:"text" binding:"required"`
-	OrderNum    int16   `json:"order_num"`
-	Points      int16   `json:"points"`
-	TopicID     *int32  `json:"topic_id"`
-	SubtopicID  *int32  `json:"subtopic_id"`
-	Explanation *string `json:"explanation"`
-	Difficulty  int16   `json:"difficulty"`
+	AllowGeneration *bool   `json:"allow_generation"`
+	Text            string  `json:"text" binding:"required"`
+	OrderNum        int16   `json:"order_num"`
+	Points          int16   `json:"points"`
+	TopicID         *int32  `json:"topic_id"`
+	SubtopicID      *int32  `json:"subtopic_id"`
+	Explanation     *string `json:"explanation"`
+	Difficulty      int16   `json:"difficulty"`
 }
 
 func (h *TestHandler) UpdateQuestion(c *gin.Context) {
@@ -809,7 +832,15 @@ func (h *TestHandler) UpdateQuestion(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "question not found"})
 		return
 	}
-	c.JSON(http.StatusOK, q)
+	var allowed bool
+	if err := h.pool.QueryRow(ctx, `UPDATE questions SET generation_allowed=COALESCE($2,generation_allowed) WHERE id=$1 RETURNING generation_allowed`, id, req.AllowGeneration).Scan(&allowed); err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
+	c.JSON(http.StatusOK, struct {
+		db.Question
+		AllowGeneration bool `json:"allow_generation"`
+	}{q, allowed})
 }
 
 // DELETE /api/v1/questions/:id
@@ -920,12 +951,15 @@ func (h *TestHandler) ListTests(c *gin.Context) {
 	if err != nil {
 		return
 	}
+	if !requireGroupRead(c, h.pool, groupID, false) {
+		return
+	}
 	limit, offset := parsePagination(c)
 	pgRows, err := h.pool.Query(context.Background(), `
 		SELECT id, group_id, title, description, time_limit, max_attempts, is_published,
 		       created_at, updated_at, is_public, created_by, deadline, topic_id
-		FROM tests WHERE group_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
-	`, groupID, limit, offset)
+		FROM tests WHERE group_id = $1 AND (created_by=$4 OR (is_published AND (is_public OR EXISTS (SELECT 1 FROM user_groups ug WHERE ug.group_id=tests.group_id AND ug.user_id=$4)))) ORDER BY created_at DESC LIMIT $2 OFFSET $3
+	`, groupID, limit, offset, c.MustGet("user_id").(int32))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
@@ -988,7 +1022,13 @@ func (h *TestHandler) ListPublicTests(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
-	c.JSON(http.StatusOK, tests)
+	visible := make([]db.Test, 0, len(tests))
+	for _, test := range tests {
+		if h.canReadTest(c.Request.Context(), test, c.MustGet("user_id").(int32)) {
+			visible = append(visible, test)
+		}
+	}
+	c.JSON(http.StatusOK, visible)
 }
 
 // GET /api/v1/tests/:id/results — результаты теста (учитель)
@@ -1077,19 +1117,28 @@ func (h *TestHandler) GetTestFull(c *gin.Context) {
 	questions, _ := h.q.GetQuestionsByTest(context.Background(), id)
 	options, _ := h.q.GetOptionsByTest(context.Background(), id)
 
-	role, _ := c.Get("role")
-	if role == "teacher" {
+	userID, _ := c.Get("user_id")
+	if !h.canReadTest(c.Request.Context(), test, userID.(int32)) {
+		c.JSON(404, gin.H{"error": "test not found"})
+		return
+	}
+	if test.CreatedBy.Valid && test.CreatedBy.Int32 == userID.(int32) {
 		optMap := make(map[int32][]db.AnswerOption)
 		for _, o := range options {
 			optMap[o.QuestionID] = append(optMap[o.QuestionID], o)
 		}
 		type questionWithOptions struct {
+			AllowGeneration bool `json:"allow_generation"`
 			db.Question
 			Options []db.AnswerOption `json:"options"`
 		}
 		qs := make([]questionWithOptions, len(questions))
 		for i, q := range questions {
 			qs[i] = questionWithOptions{Question: q, Options: optMap[q.ID]}
+			if err := h.pool.QueryRow(c.Request.Context(), `SELECT generation_allowed FROM questions WHERE id=$1`, q.ID).Scan(&qs[i].AllowGeneration); err != nil {
+				c.JSON(500, gin.H{"error": "internal error"})
+				return
+			}
 			if qs[i].Options == nil {
 				qs[i].Options = []db.AnswerOption{}
 			}
@@ -1148,29 +1197,30 @@ func (h *TestHandler) StartAttempt(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	uid := userID.(int32)
 
+	tx, err := h.pool.Begin(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
+	defer tx.Rollback(c.Request.Context())
+	var lockedID int32
+	if err := tx.QueryRow(c.Request.Context(), `SELECT id FROM tests WHERE id=$1 FOR UPDATE`, testID).Scan(&lockedID); err != nil {
+		c.JSON(404, gin.H{"error": "test not found"})
+		return
+	}
+	h = &TestHandler{q: db.New(tx), pool: h.pool}
 	test, err := h.q.GetTestByID(context.Background(), testID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "test not found"})
 		return
 	}
-	if !test.IsPublished {
-		c.JSON(http.StatusForbidden, gin.H{"error": "test is not published"})
+	if !test.IsPublished || !h.canReadTest(c.Request.Context(), test, uid) {
+		c.JSON(404, gin.H{"error": "test not found"})
 		return
 	}
-	// Приватный тест с группой — проверить что студент состоит в группе
-	if !test.IsPublic && test.GroupID.Valid {
-		inGroup := false
-		students, _ := h.q.GetStudentsByGroup(context.Background(), test.GroupID.Int32)
-		for _, s := range students {
-			if s.ID == uid {
-				inGroup = true
-				break
-			}
-		}
-		if !inGroup {
-			c.JSON(http.StatusForbidden, gin.H{"error": "not a member of this group"})
-			return
-		}
+	if test.Deadline.Valid && !time.Now().Before(test.Deadline.Time) {
+		c.JSON(403, gin.H{"error": "test deadline passed"})
+		return
 	}
 
 	// Проверить количество попыток
@@ -1192,6 +1242,11 @@ func (h *TestHandler) StartAttempt(c *gin.Context) {
 		return
 	}
 
+	if err := tx.Commit(c.Request.Context()); err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
+	h.q = db.New(h.pool)
 	// Вернуть попытку + вопросы БЕЗ is_correct
 	questions, _ := h.q.GetQuestionsByTest(context.Background(), testID)
 	options, _ := h.q.GetOptionsByTest(context.Background(), testID)
@@ -1252,6 +1307,18 @@ func (h *TestHandler) SubmitAnswer(c *gin.Context) {
 	}
 	userID, _ := c.Get("user_id")
 
+	tx, err := h.pool.Begin(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
+	defer tx.Rollback(c.Request.Context())
+	var lockedID int32
+	if err := tx.QueryRow(c.Request.Context(), `SELECT id FROM test_attempts WHERE id=$1 FOR UPDATE`, attemptID).Scan(&lockedID); err != nil {
+		c.JSON(404, gin.H{"error": "attempt not found"})
+		return
+	}
+	h = &TestHandler{q: db.New(tx), pool: h.pool}
 	attempt, err := h.q.GetAttemptByID(context.Background(), attemptID)
 	if err != nil || attempt.UserID != userID.(int32) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "attempt not found"})
@@ -1262,12 +1329,31 @@ func (h *TestHandler) SubmitAnswer(c *gin.Context) {
 		return
 	}
 
+	testAccess, err := h.q.GetTestByID(c.Request.Context(), attempt.TestID)
+	if err != nil || !h.canReadTest(c.Request.Context(), testAccess, userID.(int32)) {
+		c.JSON(404, gin.H{"error": "test not found"})
+		return
+	}
+	if attemptExpired(testAccess, attempt, time.Now()) {
+		c.JSON(403, gin.H{"error": "attempt time expired"})
+		return
+	}
+
 	var req submitAnswerReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	var valid bool
+	if err := tx.QueryRow(c.Request.Context(), `SELECT EXISTS (SELECT 1 FROM test_questions tq JOIN answer_options ao ON ao.question_id=tq.question_id WHERE tq.test_id=$1 AND tq.question_id=$2 AND ao.id=$3)`, attempt.TestID, req.QuestionID, req.OptionID).Scan(&valid); err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
+	if !valid {
+		c.JSON(400, gin.H{"error": "question or option does not belong to this test"})
+		return
+	}
 	answer, err := h.q.UpsertStudentAnswer(context.Background(), db.UpsertStudentAnswerParams{
 		AttemptID:  attemptID,
 		QuestionID: req.QuestionID,
@@ -1275,6 +1361,10 @@ func (h *TestHandler) SubmitAnswer(c *gin.Context) {
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	if err := tx.Commit(c.Request.Context()); err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
 		return
 	}
 	c.JSON(http.StatusOK, answer)
@@ -1288,19 +1378,49 @@ func (h *TestHandler) FinishAttempt(c *gin.Context) {
 	}
 	userID, _ := c.Get("user_id")
 
+	tx, err := h.pool.Begin(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
+	defer tx.Rollback(c.Request.Context())
+	var lockedID int32
+	if err := tx.QueryRow(c.Request.Context(), `SELECT id FROM test_attempts WHERE id=$1 FOR UPDATE`, attemptID).Scan(&lockedID); err != nil {
+		c.JSON(404, gin.H{"error": "attempt not found"})
+		return
+	}
+	h = &TestHandler{q: db.New(tx), pool: h.pool}
 	attempt, err := h.q.GetAttemptByID(context.Background(), attemptID)
 	if err != nil || attempt.UserID != userID.(int32) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "attempt not found"})
 		return
 	}
-	if attempt.FinishedAt.Valid {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "attempt already finished"})
+
+	testAccess, err := h.q.GetTestByID(c.Request.Context(), attempt.TestID)
+	if err != nil || !h.canReadTest(c.Request.Context(), testAccess, userID.(int32)) {
+		c.JSON(404, gin.H{"error": "test not found"})
 		return
 	}
 
-	questions, _ := h.q.GetQuestionsByTest(context.Background(), attempt.TestID)
-	options, _ := h.q.GetOptionsByTest(context.Background(), attempt.TestID)
-	studentAnswers, _ := h.q.GetAnswersByAttempt(context.Background(), attemptID)
+	if attempt.FinishedAt.Valid {
+		c.JSON(200, gin.H{"attempt": attempt, "score": attempt.Score, "max_score": attempt.MaxScore})
+		return
+	}
+	questions, err := h.q.GetQuestionsByTest(c.Request.Context(), attempt.TestID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
+	options, err := h.q.GetOptionsByTest(c.Request.Context(), attempt.TestID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
+	studentAnswers, err := h.q.GetAnswersByAttempt(c.Request.Context(), attemptID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
 
 	// Карты для быстрого доступа
 	correctOption := make(map[int32]int32)  // question_id → correct option_id
@@ -1325,7 +1445,7 @@ func (h *TestHandler) FinishAttempt(c *gin.Context) {
 	var score, maxScore int16
 	for _, q := range questions {
 		maxScore += q.Points
-		if chosenOption[q.ID] == correctOption[q.ID] {
+		if chosenOption[q.ID] != 0 && chosenOption[q.ID] == correctOption[q.ID] {
 			score += q.Points
 		}
 	}
@@ -1340,6 +1460,11 @@ func (h *TestHandler) FinishAttempt(c *gin.Context) {
 		return
 	}
 
+	if err := tx.Commit(c.Request.Context()); err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
+	h.q = db.New(h.pool)
 	// Вернуть результат с правильными ответами
 	type optionResult struct {
 		ID        int32  `json:"id"`
@@ -1392,12 +1517,18 @@ func (h *TestHandler) FinishAttempt(c *gin.Context) {
 	}
 
 	resp := gin.H{
-		"attempt":          finished,
-		"score":            score,
-		"max_score":        maxScore,
-		"percent":          func() int { if maxScore == 0 { return 0 }; return int(score) * 100 / int(maxScore) }(),
-		"can_see_answers":  canSee,
-		"deadline":         deadlineStr,
+		"attempt":   finished,
+		"score":     score,
+		"max_score": maxScore,
+		"percent": func() int {
+			if maxScore == 0 {
+				return 0
+			}
+			return int(score) * 100 / int(maxScore)
+		}(),
+		"can_see_answers": canSee,
+		"time_expired":    attemptExpired(testAccess, attempt, time.Now()),
+		"deadline":        deadlineStr,
 	}
 	if canSee {
 		resp["questions"] = qResults
@@ -1424,6 +1555,10 @@ func (h *TestHandler) AttemptReview(c *gin.Context) {
 	}
 
 	test, _ := h.q.GetTestByID(context.Background(), attempt.TestID)
+	if !h.canReadTest(c.Request.Context(), test, userID.(int32)) {
+		c.JSON(404, gin.H{"error": "test not found"})
+		return
+	}
 	if !h.canSeeResults(context.Background(), test) {
 		var deadlineStr *string
 		if test.Deadline.Valid {

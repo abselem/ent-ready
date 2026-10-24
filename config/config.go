@@ -10,6 +10,7 @@ import (
 )
 
 type Config struct {
+	AllowLogOTP         bool
 	DB                  DBConfig
 	JWT                 JWTConfig
 	SMTP                SMTPConfig
@@ -79,9 +80,14 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("JWT_REFRESH_SECRET must be set and at least 32 characters (got %d)", len(refreshSecret))
 	}
 
+	allowLog := os.Getenv("APP_ENV") == "development" || os.Getenv("APP_ENV") == "test"
+	if !allowLog && os.Getenv("RESEND_API_KEY") == "" && (os.Getenv("SMTP_HOST") == "" || os.Getenv("SMTP_USERNAME") == "") {
+		return nil, fmt.Errorf("production requires configured email OTP delivery")
+	}
 	dbPort, _ := strconv.Atoi(getEnv("POSTGRES_PORT", "5432"))
 
 	return &Config{
+		AllowLogOTP: allowLog,
 		DB: DBConfig{
 			URL:      os.Getenv("DATABASE_URL"), // Railway injects this automatically
 			Host:     getEnv("POSTGRES_HOST", "localhost"),

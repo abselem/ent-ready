@@ -45,6 +45,7 @@ func Setup(t *testing.T) (*pgxpool.Pool, *config.Config) {
 	adminPool.Close()
 
 	cfg := &config.Config{
+		CORSOrigins: []string{"http://localhost:3000"},
 		DB: config.DBConfig{
 			Host:     host,
 			Port:     port,
@@ -68,7 +69,7 @@ func Setup(t *testing.T) (*pgxpool.Pool, *config.Config) {
 	applyMigrations(t, pool, root)
 
 	t.Cleanup(func() {
-		truncate(pool)
+		truncate(t, pool)
 		pool.Close()
 	})
 
@@ -109,11 +110,16 @@ func applyMigrations(t *testing.T, pool *pgxpool.Pool, root string) {
 	}
 }
 
-func truncate(pool *pgxpool.Pool) {
+func truncate(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
 	ctx := context.Background()
-	tables := []string{"lessons", "user_groups", "ban_log", "sessions", "otp_codes", "groups", "users"}
-	for _, tbl := range tables {
-		_, _ = pool.Exec(ctx, "TRUNCATE "+tbl+" RESTART IDENTITY CASCADE")
+	// Keep the reference taxonomy and roles, but never retain private content
+	// from a previous test (owner_id may use ON DELETE SET NULL).
+	_, err := pool.Exec(ctx, `TRUNCATE lessons, tests, questions, question_contexts,
+        ent_attempts, ban_log, sessions, otp_codes, sms_log, groups, users
+        RESTART IDENTITY CASCADE`)
+	if err != nil {
+		t.Errorf("clean isolated test database: %v", err)
 	}
 }
 
@@ -138,8 +144,8 @@ func Request(t *testing.T, h http.Handler, method, path, body string, token ...s
 
 // MockSender перехватывает OTP-коды для использования в тестах.
 type MockSender struct {
-	mu       sync.Mutex
-	LastCode string
+	mu        sync.Mutex
+	LastCode  string
 	LastPhone string
 }
 

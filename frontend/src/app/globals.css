@@ -1,37 +1,85 @@
 @import "tailwindcss";
 @import "katex/dist/katex.min.css";
 
-@theme inline {
-  --color-background: #ffffff;
-  --color-foreground: #0f172a;
-  --color-muted: #f1f5f9;
-  --color-muted-foreground: #64748b;
-  --color-border: #e2e8f0;
-  --color-primary: #2563eb;
-  --color-primary-foreground: #ffffff;
-  --color-destructive: #ef4444;
-  --color-card: #ffffff;
-  --color-card-foreground: #0f172a;
-  --font-sans: var(--font-geist);
-  --radius: 0.5rem;
+:root {
+  color-scheme: light;
+  --app-background: #f5f7fa;
+  --app-foreground: #17243a;
+  --app-card: #ffffff;
+  --app-muted: #edf1f6;
+  --app-muted-foreground: #52627a;
+  --app-border: #d8e0ea;
+  --app-control-border: #7b8ba0;
+  --app-primary: #2454c6;
+  --app-primary-foreground: #ffffff;
+  --app-accent: #edf3ff;
+  --app-success: #17613d;
+  --app-success-surface: #eaf6ef;
+  --app-destructive: #a42435;
+  --app-destructive-surface: #fdeef0;
 }
-
 @media (prefers-color-scheme: dark) {
-  @theme inline {
-    --color-background: #0f172a;
-    --color-foreground: #f8fafc;
-    --color-muted: #1e293b;
-    --color-muted-foreground: #94a3b8;
-    --color-border: #334155;
-    --color-card: #1e293b;
-    --color-card-foreground: #f8fafc;
+  :root {
+    color-scheme: dark;
+    --app-background: #101827;
+    --app-foreground: #f1f5fa;
+    --app-card: #192436;
+    --app-muted: #243247;
+    --app-muted-foreground: #b3c0d1;
+    --app-border: #40516a;
+    --app-control-border: #7a8da9;
+    --app-primary: #a9c5ff;
+    --app-primary-foreground: #10203f;
+    --app-accent: #233650;
+    --app-success: #a6e5bc;
+    --app-success-surface: #183b2d;
+    --app-destructive: #ffbac5;
+    --app-destructive-surface: #492733;
   }
 }
-
-body {
-  font-family: var(--font-sans), Arial, sans-serif;
+@theme inline {
+  --color-background: var(--app-background);
+  --color-foreground: var(--app-foreground);
+  --color-card: var(--app-card);
+  --color-card-foreground: var(--app-foreground);
+  --color-muted: var(--app-muted);
+  --color-muted-foreground: var(--app-muted-foreground);
+  --color-border: var(--app-border);
+  --color-control-border: var(--app-control-border);
+  --color-primary: var(--app-primary);
+  --color-primary-foreground: var(--app-primary-foreground);
+  --color-accent: var(--app-accent);
+  --color-success: var(--app-success);
+  --color-success-surface: var(--app-success-surface);
+  --color-destructive: var(--app-destructive);
+  --color-destructive-surface: var(--app-destructive-surface);
+  --font-sans: var(--font-geist);
+  --radius: 0.625rem;
 }
-
-* {
-  box-sizing: border-box;
+* { box-sizing: border-box; }
+body { font-family: var(--font-sans), Arial, sans-serif; line-height: 1.55; }
+button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+button:not(:disabled), a { touch-action: manipulation; }
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--app-primary);
+  outline-offset: 3px;
+}
+::selection { background: var(--app-primary); color: var(--app-primary-foreground); }
+.page-shell { width: 100%; max-width: 1184px; margin-inline: auto; padding: 32px; }
+.page-narrow { max-width: 824px; }
+.surface { border: 1px solid var(--app-border); border-radius: 16px; background: var(--app-card); }
+.control-field { width: 100%; min-height: 44px; border: 1px solid var(--app-control-border); border-radius: 10px; padding: 10px 12px; background: var(--app-card); color: var(--app-foreground); }
+.control-field::placeholder { color: var(--app-muted-foreground); }
+.katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding-block: 4px; }
+.test-question { overflow-wrap: anywhere; }
+.test-question .katex { font-size: 1.1em; }
+.app-main { min-width: 0; scrollbar-gutter: stable; }
+.mobile-nav-space { padding-bottom: calc(80px + env(safe-area-inset-bottom)); }
+@media (min-width: 768px) { .mobile-nav-space { padding-bottom: 0; } }
+@media (max-width: 767px) {
+  .page-shell { padding: 24px 16px; }
+  input, select, textarea { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }

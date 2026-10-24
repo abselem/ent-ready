@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { useAuthStore } from "@/store/auth";
+import { Button } from "@/components/ui/button";
 
 interface Topic { id: number; name: string }
 interface Test {
@@ -12,141 +12,107 @@ interface Test {
   title: string;
   max_attempts: number;
   is_published: boolean;
-  time_limit: { Int16: number; Valid: boolean } | null;
+  time_limit: number | null;
 }
 interface Group { id: number; name: string }
 
-const subjectConfig: Record<string, { symbol: string; color: string }> = {
-  "Математика":               { symbol: "∑",  color: "#3b82f6" },
-  "Физика":                   { symbol: "⚛",  color: "#8b5cf6" },
-  "Химия":                    { symbol: "⚗",  color: "#10b981" },
-  "Биология":                 { symbol: "🧬", color: "#059669" },
-  "География":                { symbol: "🌍", color: "#0891b2" },
-  "Информатика":              { symbol: "⌨",  color: "#6366f1" },
-  "Всемирная история":        { symbol: "📜", color: "#f59e0b" },
-  "Основы права и экономики": { symbol: "⚖",  color: "#64748b" },
-  "Английский язык":          { symbol: "EN", color: "#0369a1" },
-  "Французский язык":         { symbol: "FR", color: "#dc2626" },
-  "Немецкий язык":            { symbol: "DE", color: "#ca8a04" },
-  "Казахская литература":     { symbol: "Қ",  color: "#b45309" },
-  "Русская литература":       { symbol: "Р",  color: "#be185d" },
+const symbols: Record<string, string> = {
+  "Математика": "∑", "Физика": "Ф", "Химия": "Х", "Биология": "Б",
+  "География": "Г", "Информатика": "⌘", "Всемирная история": "И",
+  "Основы права и экономики": "§", "Английский язык": "EN", "Французский язык": "FR",
+  "Немецкий язык": "DE", "Казахская литература": "Қ", "Русская литература": "Р",
 };
-
-function subjectCfg(name: string) {
-  return subjectConfig[name] ?? { symbol: name.slice(0, 2).toUpperCase(), color: "#64748b" };
-}
+const actionClass = "inline-flex min-h-11 items-center justify-center rounded-xl border border-control-border px-4 text-sm font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2";
 
 export default function StudentHomePage() {
-  const router = useRouter();
-  const { user } = useAuthStore();
   const [search, setSearch] = useState("");
-
-  const { data: topics = [] } = useQuery<Topic[]>({
+  const topicsQuery = useQuery<Topic[]>({
     queryKey: ["topics"],
-    queryFn: async () => (await api.get("/topics")).data,
+    queryFn: async () => (await api.get("/topics")).data ?? [],
   });
-
-  const { data: groups = [] } = useQuery<Group[]>({
+  const groupsQuery = useQuery<Group[]>({
     queryKey: ["joined-groups-home"],
-    queryFn: async () => (await api.get("/groups/joined")).data,
+    queryFn: async () => (await api.get("/groups/joined")).data ?? [],
   });
-
-  const { data: groupTests = [] } = useQuery<Test[]>({
-    queryKey: ["student-assigned-tests", groups.map((g) => g.id)],
-    queryFn: async () => {
-      const all = await Promise.all(
-        groups.map((g) =>
-          api.get(`/groups/${g.id}/tests`).then((r) => (r.data ?? []) as Test[])
-        )
-      );
-      return all.flat().filter((t) => t.is_published);
-    },
-    enabled: groups.length > 0,
+  const groupQueries = useQueries({
+    queries: (groupsQuery.data ?? []).map((group) => ({
+      queryKey: ["student-assigned-tests", group.id],
+      queryFn: async (): Promise<Test[]> => (await api.get(`/groups/${group.id}/tests`)).data ?? [],
+    })),
   });
+  const tests = [...new Map(groupQueries.flatMap((query) => query.data ?? [])
+    .filter((test) => test.is_published).map((test) => [test.id, test])).values()];
+  const assignmentsLoading = groupsQuery.isPending || groupQueries.some((query) => query.isPending);
+  const assignmentsError = groupsQuery.isError || groupQueries.some((query) => query.isError);
+  const topics = topicsQuery.data ?? [];
+  const filteredTopics = topics.filter((topic) => topic.name.toLocaleLowerCase("ru").includes(search.trim().toLocaleLowerCase("ru")));
 
-  const filteredTopics = topics.filter((t) =>
-    t.name.toLowerCase().includes(search.toLowerCase())
-  );
+  function retryAssignments() {
+    if (groupsQuery.isError) void groupsQuery.refetch();
+    groupQueries.forEach((query) => { if (query.isError) void query.refetch(); });
+  }
 
   return (
-    <div className="p-4 md:p-6 max-w-3xl mx-auto">
-      <div className="mb-5">
-        <h1 className="text-2xl font-bold">Привет, {user?.first_name}!</h1>
-      </div>
+    <div className="mx-auto max-w-6xl space-y-8 p-4 md:p-8">
+      <header className="space-y-2">
+        <p className="text-sm font-medium text-primary">Учебное пространство</p>
+        <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">Мои тесты</h1>
+        <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">Откройте назначенный тест или выберите предмет для самостоятельной тренировки.</p>
+      </header>
 
-      {/* Assigned tests */}
-      {groupTests.length > 0 && (
-        <section className="mb-6">
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-            Назначенные мне
-          </h2>
-          <div className="flex flex-col gap-2">
-            {groupTests.map((test) => (
-              <button
-                key={test.id}
-                onClick={() => router.push(`/student/tests/${test.id}`)}
-                className="text-left w-full border border-border rounded-xl p-3 bg-card hover:border-primary transition-colors flex items-center gap-3"
-              >
-                <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center text-primary shrink-0">
-                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/>
-                    <rect x="9" y="3" width="6" height="4" rx="1"/>
-                  </svg>
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium truncate">{test.title}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {test.max_attempts} попыт.
-                    {test.time_limit?.Valid && test.time_limit.Int16 > 0 && ` · ${test.time_limit.Int16} мин`}
-                  </p>
-                </div>
-                <svg className="w-4 h-4 text-muted-foreground shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="m9 18 6-6-6-6"/>
-                </svg>
-              </button>
+      <section aria-labelledby="assigned-title" className="space-y-4">
+        <h2 id="assigned-title" className="text-xl font-semibold">Назначенные тесты</h2>
+        {assignmentsError && (
+          <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-destructive/30 bg-card p-4">
+            <p className="max-w-xl text-sm text-destructive">Не удалось загрузить часть назначений. Доступные тесты показаны ниже.</p>
+            <Button variant="outline" onClick={retryAssignments}>Повторить загрузку</Button>
+          </div>
+        )}
+        {assignmentsLoading && <p role="status" className="rounded-2xl border border-border bg-card p-6 text-sm text-muted-foreground">Загружаем назначения…</p>}
+        {tests.length > 0 && <div className="grid gap-3 md:grid-cols-2">
+          {tests.map((test) => (
+            <article key={test.id} className="flex min-w-0 flex-col items-start rounded-2xl border border-border bg-card p-5">
+              <span className="mb-3 rounded-lg bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">Назначенный тест</span>
+              <h3 className="break-words text-base font-semibold">{test.title}</h3>
+              <p className="mb-5 mt-2 text-sm text-muted-foreground">Максимум попыток: {test.max_attempts}{typeof test.time_limit === "number" && test.time_limit > 0 ? ` · ${test.time_limit} мин` : ""}</p>
+              <Link href={`/student/tests/${test.id}`} className={`${actionClass} mt-auto`}>Открыть тест <span aria-hidden="true" className="ml-3">→</span></Link>
+            </article>
+          ))}
+        </div>}
+        {!assignmentsLoading && !assignmentsError && tests.length === 0 && (
+          <div className="rounded-2xl border border-dashed border-border bg-card p-6">
+            <p className="font-medium">Назначенных тестов пока нет</p>
+            <p className="mt-1 text-sm text-muted-foreground">Можно выбрать предмет для тренировки.</p>
+          </div>
+        )}
+      </section>
+
+      <section aria-labelledby="subjects-title" className="space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><h2 id="subjects-title" className="text-xl font-semibold">Тренировка по предметам</h2><p className="mt-1 text-sm text-muted-foreground">Выберите направление и занимайтесь в своём темпе.</p></div>
+          <Link href="/student/ent" className={actionClass}>Подготовка к ЕНТ <span aria-hidden="true" className="ml-3">→</span></Link>
+        </div>
+        <div className="max-w-md">
+          <label htmlFor="subject-search" className="mb-2 block text-sm font-medium">Найти предмет</label>
+          <input id="subject-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Название предмета" className="min-h-11 w-full rounded-xl border border-control-border bg-card px-4 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2" />
+        </div>
+        {topicsQuery.isPending ? <p role="status" className="rounded-2xl border border-border bg-card p-6 text-sm text-muted-foreground">Загружаем предметы…</p> : topicsQuery.isError ? (
+          <div role="alert" className="rounded-2xl border border-destructive/30 bg-card p-6"><p className="mb-3 text-sm text-destructive">Не удалось загрузить предметы.</p><Button variant="outline" onClick={() => void topicsQuery.refetch()}>Повторить загрузку</Button></div>
+        ) : topics.length === 0 ? (
+          <p className="rounded-2xl border border-dashed border-border bg-card p-6 text-sm text-muted-foreground">Предметов для тренировки пока нет.</p>
+        ) : filteredTopics.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-border bg-card p-6"><p className="font-medium">Ничего не найдено</p><p className="mb-3 mt-1 text-sm text-muted-foreground">Попробуйте другое название предмета.</p><Button variant="outline" onClick={() => setSearch("")}>Сбросить поиск</Button></div>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2 lg:grid-cols-3">
+            {filteredTopics.map((topic) => (
+              <Link key={topic.id} href={`/student/subjects/${topic.id}`} className="group flex min-w-0 items-start gap-3 rounded-2xl border border-border bg-card p-5 transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">
+                <span aria-hidden="true" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-lg font-semibold text-primary">{symbols[topic.name] ?? topic.name.slice(0, 2).toUpperCase()}</span>
+                <div className="min-w-0"><h3 className="break-words text-sm font-medium leading-relaxed">{topic.name}</h3><p className="mt-1 text-xs text-muted-foreground">Открыть тренировки <span aria-hidden="true">→</span></p></div>
+              </Link>
             ))}
           </div>
-        </section>
-      )}
-
-      {/* Search */}
-      <div className="relative mb-4">
-        <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-        </svg>
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Поиск по предметам..."
-          className="w-full border border-border rounded-xl pl-9 pr-4 py-2.5 bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-        />
-      </div>
-
-      {/* Topics grid */}
-      {filteredTopics.length === 0 ? (
-        <p className="text-center py-12 text-muted-foreground text-sm">Предметы не найдены</p>
-      ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-          {filteredTopics.map((topic) => {
-            const cfg = subjectCfg(topic.name);
-            return (
-              <button
-                key={topic.id}
-                onClick={() => router.push(`/student/subjects/${topic.id}`)}
-                className="flex flex-col items-center gap-2.5 p-4 rounded-2xl border border-border bg-card hover:border-primary hover:shadow-sm transition-all text-center active:scale-[0.97]"
-              >
-                <div
-                  className="w-14 h-14 rounded-2xl flex items-center justify-center text-xl font-bold text-white"
-                  style={{ backgroundColor: cfg.color }}
-                >
-                  {cfg.symbol}
-                </div>
-                <span className="text-sm font-medium leading-tight">{topic.name}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
+        )}
+      </section>
     </div>
   );
 }

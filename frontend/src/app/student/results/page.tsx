@@ -2,7 +2,11 @@
 
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { PageHeader } from "@/components/ui/page-header";
+import { AsyncState } from "@/components/ui/async-state";
+import { Button } from "@/components/ui/button";
+import { scorePercent } from "@/lib/test-attempt-state";
 import { api } from "@/lib/api";
 
 interface Attempt {
@@ -40,23 +44,16 @@ function cutoffDate(period: Period): Date | null {
 function timeGroup(ts: string): string {
   const now = new Date();
   const d = new Date(ts);
-  const diffDays = Math.floor((now.getTime() - d.getTime()) / 86_400_000);
+  if (!Number.isFinite(d.getTime())) return "Ранее";
+  const day = (value: Date) => Date.UTC(value.getFullYear(), value.getMonth(), value.getDate());
+  const diffDays = (day(now) - day(d)) / 86_400_000;
   if (diffDays === 0) return "Сегодня";
   if (diffDays === 1) return "Вчера";
-  if (diffDays < 7)  return "На этой неделе";
-  if (diffDays < 30) return "В этом месяце";
+  const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  weekStart.setDate(weekStart.getDate() - (weekStart.getDay() + 6) % 7);
+  if (d >= weekStart && d <= now) return "На этой неделе";
+  if (d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()) return "В этом месяце";
   return d.toLocaleDateString("ru-RU", { month: "long", year: "numeric" });
-}
-
-function pct(score: number | null, max: number | null) {
-  if (!max) return 0;
-  return Math.round(((score ?? 0) / max) * 100);
-}
-
-function scoreColor(p: number) {
-  if (p >= 80) return { bar: "bg-green-500", text: "text-green-500" };
-  if (p >= 50) return { bar: "bg-yellow-500", text: "text-yellow-500" };
-  return { bar: "bg-destructive", text: "text-destructive" };
 }
 
 function formatDate(ts: string | null) {
@@ -68,31 +65,28 @@ function formatDate(ts: string | null) {
 }
 
 export default function StudentResultsPage() {
-  const router = useRouter();
   const [period, setPeriod]       = useState<Period>("all");
   const [search, setSearch]       = useState("");
   const [topicFilter, setTopicFilter] = useState<number | "">("");
 
-  const { data: attempts = [], isLoading } = useQuery<Attempt[]>({
+  const { data: attempts = [], isPending, isError, refetch } = useQuery<Attempt[]>({
     queryKey: ["student-attempts"],
-    queryFn: async () => (await api.get("/attempts/my")).data,
+    queryFn: async () => (await api.get("/attempts/my")).data ?? [],
   });
 
   // Unique topics from attempts
   const topics = useMemo(() =>
     Array.from(
-      new Map(attempts.filter(a => a.topic_id != null).map(a => [a.topic_id!, a.topic_name!])).entries()
+      new Map(attempts.filter(a => a.topic_id != null).map(a => [a.topic_id!, a.topic_name ?? "Без названия"])).entries()
     ).sort(([, a], [, b]) => a.localeCompare(b, "ru")),
     [attempts]
   );
 
-  // Stats
+  // Summary covers only the loaded history, not all attempts on the server.
   const stats = useMemo(() => {
-    const finished = attempts.filter(a => a.max_score);
-    if (!finished.length) return null;
-    const avg = Math.round(finished.reduce((s, a) => s + pct(a.score, a.max_score), 0) / finished.length);
-    const best = Math.max(...finished.map(a => pct(a.score, a.max_score)));
-    return { total: finished.length, avg, best };
+    const values = attempts.map(a => scorePercent(a.score, a.max_score)).filter((value): value is number => value !== null);
+    if (!values.length) return null;
+    return { total: attempts.length, avg: Math.round(values.reduce((sum, value) => sum + value, 0) / values.length), best: Math.max(...values) };
   }, [attempts]);
 
   // Filter
@@ -102,7 +96,7 @@ export default function StudentResultsPage() {
     if (cut) result = result.filter(a => a.finished_at && new Date(a.finished_at) >= cut);
     if (topicFilter) result = result.filter(a => a.topic_id === topicFilter);
     if (search.trim()) {
-      const q = search.toLowerCase();
+      const q = search.trim().toLowerCase();
       result = result.filter(a =>
         a.test_title.toLowerCase().includes(q) ||
         (a.topic_name ?? "").toLowerCase().includes(q)
@@ -122,148 +116,22 @@ export default function StudentResultsPage() {
     return Array.from(map.entries());
   }, [filtered]);
 
+  function resetFilters() { setPeriod("all"); setSearch(""); setTopicFilter(""); }
+  const controlClass = "min-h-11 w-full rounded-[10px] border border-control-border bg-card px-3 py-2 text-sm";
   return (
-    <div className="p-4 md:p-6 max-w-2xl mx-auto">
-      <h1 className="text-2xl font-bold mb-5">Мои результаты</h1>
-
-      {/* Stats summary */}
-      {stats && (
-        <div className="grid grid-cols-3 gap-3 mb-5">
-          {[
-            { label: "Всего тестов", value: stats.total },
-            { label: "Средний балл", value: `${stats.avg}%` },
-            { label: "Лучший результат", value: `${stats.best}%` },
-          ].map(s => (
-            <div key={s.label} className="border border-border rounded-xl p-3 bg-card text-center">
-              <p className="text-lg font-bold">{s.value}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">{s.label}</p>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Search */}
-      <div className="relative mb-3">
-        <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-        </svg>
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Поиск по названию теста или предмету..."
-          className="w-full border border-border rounded-xl pl-9 pr-4 py-2.5 bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-        />
-      </div>
-
-      {/* Time period chips */}
-      <div className="flex gap-2 overflow-x-auto pb-1 mb-3 scrollbar-none">
-        {PERIODS.map(p => (
-          <button
-            key={p.value}
-            onClick={() => setPeriod(p.value)}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-              period === p.value
-                ? "bg-primary text-primary-foreground"
-                : "border border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground"
-            }`}
-          >
-            {p.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Topic filter */}
-      {topics.length > 0 && (
-        <div className="flex gap-2 overflow-x-auto pb-1 mb-5 scrollbar-none">
-          <button
-            onClick={() => setTopicFilter("")}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              topicFilter === ""
-                ? "bg-primary/15 text-primary border border-primary/30"
-                : "border border-border bg-card text-muted-foreground hover:bg-muted"
-            }`}
-          >
-            Все предметы
-          </button>
-          {topics.map(([id, name]) => (
-            <button
-              key={id}
-              onClick={() => setTopicFilter(topicFilter === id ? "" : id)}
-              className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                topicFilter === id
-                  ? "bg-primary/15 text-primary border border-primary/30"
-                  : "border border-border bg-card text-muted-foreground hover:bg-muted"
-              }`}
-            >
-              {name}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Results */}
-      {isLoading ? (
-        <div className="flex flex-col gap-3">
-          {[1, 2, 3].map(i => <div key={i} className="h-24 bg-muted/30 rounded-xl animate-pulse" />)}
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground">
-          {attempts.length === 0 ? "Нет завершённых тестов" : "Ничего не найдено — попробуйте изменить фильтры"}
-        </div>
-      ) : (
-        <div className="flex flex-col gap-6">
-          {grouped.map(([group, items]) => (
-            <section key={group}>
-              {/* Time group header */}
-              <div className="flex items-center gap-3 mb-3">
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{group}</p>
-                <div className="flex-1 h-px bg-border" />
-                <span className="text-xs text-muted-foreground">{items.length}</span>
-              </div>
-
-              <div className="flex flex-col gap-2.5">
-                {items.map(a => {
-                  const p = pct(a.score, a.max_score);
-                  const { bar, text } = scoreColor(p);
-                  return (
-                    <div key={a.id} className="border border-border rounded-2xl bg-card overflow-hidden hover:border-primary/50 transition-colors">
-                      <div className="p-4">
-                        <div className="flex items-start justify-between gap-2 mb-3">
-                          <div className="flex-1 min-w-0">
-                            {a.topic_name && (
-                              <span className="inline-block text-xs font-medium text-primary bg-primary/10 px-2 py-0.5 rounded-full mb-1.5">
-                                {a.topic_name}
-                              </span>
-                            )}
-                            <p className="font-medium text-sm leading-snug truncate">{a.test_title}</p>
-                            <p className="text-xs text-muted-foreground mt-0.5">{formatDate(a.finished_at ?? null)}</p>
-                          </div>
-                          <div className="text-right shrink-0">
-                            <p className={`text-lg font-bold leading-none ${text}`}>{p}%</p>
-                            <p className="text-xs text-muted-foreground mt-0.5">{a.score ?? 0}/{a.max_score ?? 0} б.</p>
-                          </div>
-                        </div>
-
-                        {/* Progress bar */}
-                        <div className="h-1.5 bg-muted rounded-full mb-3">
-                          <div className={`h-full rounded-full transition-all ${bar}`} style={{ width: `${p}%` }} />
-                        </div>
-
-                        <button
-                          onClick={() => router.push(`/student/results/${a.id}`)}
-                          className="text-xs text-primary hover:text-primary/80 transition-colors font-medium"
-                        >
-                          Разобрать ошибки →
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-          ))}
-        </div>
-      )}
+    <div className="page-shell space-y-6">
+      <PageHeader title="Мои результаты" eyebrow="Моя подготовка" description="История завершённых тестов и доступный разбор ответов." />
+      {!isPending && !isError && stats && <section aria-label="Сводка загруженной истории" className="space-y-3"><p className="text-sm text-muted-foreground">В загруженной истории · показатели до применения фильтров</p><div className="grid gap-3 min-[360px]:grid-cols-3">{[{ label: "Попыток загружено", value: stats.total }, { label: "Средний % от максимума", value: `${stats.avg}%` }, { label: "Лучший % от максимума", value: `${stats.best}%` }].map(item => <div key={item.label} className="surface p-4"><p className="text-2xl font-semibold tabular-nums">{item.value}</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">{item.label}</p></div>)}</div><p className="text-xs text-muted-foreground">Среднее и лучший результат рассчитаны по попыткам с известными баллами и положительным максимумом.</p></section>}
+      <section aria-label="Фильтры результатов" className="surface space-y-4 p-5">
+        <div><label htmlFor="result-search" className="mb-2 block text-sm font-medium">Найти тест или предмет</label><input id="result-search" type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Название теста или предмета" className={controlClass} /></div>
+        <div role="group" aria-label="Период" className="flex flex-wrap gap-2">{PERIODS.map(item => <Button key={item.value} variant={period === item.value ? "default" : "outline"} aria-pressed={period === item.value} onClick={() => setPeriod(item.value)}>{item.label}</Button>)}</div>
+        {topics.length > 0 && <div><label htmlFor="result-topic" className="mb-2 block text-sm font-medium">Предмет</label><select id="result-topic" value={topicFilter} onChange={event => setTopicFilter(event.target.value ? Number(event.target.value) : "")} className={controlClass}><option value="">Все предметы</option>{topics.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></div>}
+      </section>
+      {isPending ? <AsyncState kind="loading" title="Загружаем историю…" /> : isError ? <AsyncState kind="error" title="Не удалось загрузить результаты" description="Проверьте соединение и повторите загрузку." onRetry={() => void refetch()} /> : attempts.length === 0 ? <AsyncState title="Нет завершённых тестов" description="После прохождения теста результат появится здесь." /> : filtered.length === 0 ? <div className="space-y-3"><AsyncState title="Ничего не найдено" description="Попробуйте изменить период, предмет или поисковый запрос." /><Button variant="outline" onClick={resetFilters}>Сбросить фильтры</Button></div> : <div className="space-y-7">{grouped.map(([group, items]) => <section key={group} className="space-y-3"><h2 className="text-base font-semibold">{group}</h2><div className="space-y-3">{items.map(attempt => {
+        const percent = scorePercent(attempt.score, attempt.max_score);
+        return <article key={attempt.id} className="surface p-5"><div className="flex flex-wrap items-start justify-between gap-4"><div className="min-w-0 flex-1">{attempt.topic_name && <p className="mb-2 text-xs font-medium text-primary">{attempt.topic_name}</p>}<h3 className="break-words text-base font-semibold">{attempt.test_title}</h3><p className="mt-1 text-xs text-muted-foreground">{formatDate(attempt.finished_at)}</p></div><div><p className="text-lg font-semibold tabular-nums">{attempt.score ?? "—"} / {attempt.max_score ?? "—"} баллов</p>{percent !== null && <p className="mt-1 text-xs text-muted-foreground">{percent}% от максимального балла</p>}</div></div><Link href={`/student/results/${attempt.id}`} className="mt-4 inline-flex min-h-11 items-center gap-2 rounded-[10px] border border-border px-4 text-sm font-medium hover:bg-muted">Открыть результат<span aria-hidden="true">→</span></Link></article>;
+      })}</div></section>)}</div>}
+      {!isPending && !isError && attempts.length > 0 && <p className="text-xs text-muted-foreground">Поиск и фильтры применяются к загруженной истории, которая может содержать не все ваши попытки.</p>}
     </div>
   );
 }

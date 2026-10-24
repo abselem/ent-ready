@@ -30,7 +30,7 @@ func (h *ENTHandler) selectByDifficulty(ctx context.Context, topicID int32, diff
 		SELECT id, test_id, text, order_num, points, created_at, owner_id,
 		       topic_id, subtopic_id, explanation, difficulty
 		FROM questions
-		WHERE topic_id = $1 AND difficulty = $2 AND owner_id IS NOT NULL
+		WHERE topic_id = $1 AND difficulty = $2 AND generation_allowed=TRUE
 		ORDER BY RANDOM() LIMIT $3`, topicID, difficulty, n)
 	if err != nil {
 		return nil, err
@@ -44,7 +44,7 @@ func (h *ENTHandler) selectSingleAnswer(ctx context.Context, topicID int32, n in
 		SELECT q.id, q.test_id, q.text, q.order_num, q.points, q.created_at, q.owner_id,
 		       q.topic_id, q.subtopic_id, q.explanation, q.difficulty
 		FROM questions q
-		WHERE q.topic_id = $1 AND q.owner_id IS NOT NULL
+		WHERE q.topic_id = $1 AND q.generation_allowed=TRUE
 		  AND (SELECT COUNT(*) FROM answer_options ao WHERE ao.question_id = q.id AND ao.is_correct) = 1
 		ORDER BY RANDOM() LIMIT $2`, topicID, n)
 	if err != nil {
@@ -59,7 +59,7 @@ func (h *ENTHandler) selectMultiAnswer(ctx context.Context, topicID int32, n int
 		SELECT q.id, q.test_id, q.text, q.order_num, q.points, q.created_at, q.owner_id,
 		       q.topic_id, q.subtopic_id, q.explanation, q.difficulty
 		FROM questions q
-		WHERE q.topic_id = $1 AND q.owner_id IS NOT NULL
+		WHERE q.topic_id = $1 AND q.generation_allowed=TRUE
 		  AND (SELECT COUNT(*) FROM answer_options ao WHERE ao.question_id = q.id AND ao.is_correct) >= 2
 		ORDER BY RANDOM() LIMIT $2`, topicID, n)
 	if err != nil {
@@ -229,10 +229,10 @@ type slotCfg struct {
 }
 
 var (
-	slotCfgMG  = slotCfg{easy: 3, medium: 3, hard: 4}  // Мат. грамотность
-	slotCfgHK  = slotCfg{easy: 6, medium: 7, hard: 7}  // История Казахстана
-	slotCfgPrf = slotCfg{single: 30, multi: 10}          // Profile subjects
-	slotCfgRC  = slotCfg{easy: 3, medium: 3, hard: 4}  // Грамотность чтения
+	slotCfgMG  = slotCfg{easy: 3, medium: 3, hard: 4} // Мат. грамотность
+	slotCfgHK  = slotCfg{easy: 6, medium: 7, hard: 7} // История Казахстана
+	slotCfgPrf = slotCfg{single: 30, multi: 10}       // Profile subjects
+	slotCfgRC  = slotCfg{easy: 3, medium: 3, hard: 4} // Грамотность чтения
 )
 
 func (h *ENTHandler) Start(c *gin.Context) {
@@ -334,6 +334,10 @@ func (h *ENTHandler) Start(c *gin.Context) {
 		slot5 = append(slot5, qs...)
 	}
 
+	if len(slot1)+len(slot2)+len(slot3)+len(slot4)+len(slot5) == 0 {
+		c.JSON(400, gin.H{"error": "no questions approved for generation"})
+		return
+	}
 	// Create attempt
 	attempt, err := h.q.CreateENTAttempt(ctx, db.CreateENTAttemptParams{
 		UserID:     userID.(int32),
@@ -581,6 +585,18 @@ func (h *ENTHandler) SaveAnswer(c *gin.Context) {
 	}
 	userID, _ := c.Get("user_id")
 
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
+	defer tx.Rollback(ctx)
+	var lockedID int32
+	if err := tx.QueryRow(ctx, `SELECT id FROM ent_attempts WHERE id=$1 FOR UPDATE`, attemptID).Scan(&lockedID); err != nil {
+		c.JSON(404, gin.H{"error": "not found"})
+		return
+	}
+	h = &ENTHandler{q: db.New(tx), pool: h.pool}
 	attempt, err := h.q.GetENTAttemptByID(ctx, attemptID)
 	if err != nil || attempt.UserID != userID.(int32) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
@@ -597,6 +613,25 @@ func (h *ENTHandler) SaveAnswer(c *gin.Context) {
 		return
 	}
 
+	var belongs bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM ent_attempt_questions WHERE attempt_id=$1 AND question_id=$2)`, attemptID, req.QuestionID).Scan(&belongs); err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
+	if !belongs {
+		c.JSON(400, gin.H{"error": "question does not belong to attempt"})
+		return
+	}
+	for _, optionID := range req.OptionIDs {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM answer_options WHERE id=$1 AND question_id=$2)`, optionID, req.QuestionID).Scan(&belongs); err != nil {
+			c.JSON(500, gin.H{"error": "internal error"})
+			return
+		}
+		if !belongs {
+			c.JSON(400, gin.H{"error": "option does not belong to question"})
+			return
+		}
+	}
 	// Replace existing selection
 	if err := h.q.ClearENTAnswersForQuestion(ctx, db.ClearENTAnswersForQuestionParams{
 		AttemptID:  attemptID,
@@ -615,6 +650,10 @@ func (h *ENTHandler) SaveAnswer(c *gin.Context) {
 			return
 		}
 	}
+	if err := tx.Commit(ctx); err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
 	c.Status(http.StatusNoContent)
 }
 
@@ -628,13 +667,25 @@ func (h *ENTHandler) Finish(c *gin.Context) {
 	}
 	userID, _ := c.Get("user_id")
 
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
+	defer tx.Rollback(ctx)
+	var lockedID int32
+	if err := tx.QueryRow(ctx, `SELECT id FROM ent_attempts WHERE id=$1 FOR UPDATE`, attemptID).Scan(&lockedID); err != nil {
+		c.JSON(404, gin.H{"error": "not found"})
+		return
+	}
+	h = &ENTHandler{q: db.New(tx), pool: h.pool}
 	attempt, err := h.q.GetENTAttemptByID(ctx, attemptID)
 	if err != nil || attempt.UserID != userID.(int32) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 	if attempt.FinishedAt.Valid {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "already finished"})
+		c.JSON(200, attempt)
 		return
 	}
 
@@ -689,6 +740,10 @@ func (h *ENTHandler) Finish(c *gin.Context) {
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
 		return
 	}
 	c.JSON(http.StatusOK, finished)

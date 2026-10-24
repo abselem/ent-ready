@@ -2,10 +2,10 @@ package handler
 
 import (
 	"context"
-	"math/rand"
+	"crypto/rand"
+	"math/big"
 	"net/http"
 	"strconv"
-	"time"
 
 	"testing-app/config"
 	db "testing-app/db/sqlc"
@@ -26,10 +26,14 @@ func NewGroupHandler(pool *pgxpool.Pool, _ *config.Config) *GroupHandler {
 const inviteCodeChars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 func generateInviteCode() string {
-	src := rand.New(rand.NewSource(time.Now().UnixNano()))
+
 	b := make([]byte, 6)
 	for i := range b {
-		b[i] = inviteCodeChars[src.Intn(len(inviteCodeChars))]
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(inviteCodeChars))))
+		if err != nil {
+			panic("secure randomness unavailable")
+		}
+		b[i] = inviteCodeChars[n.Int64()]
 	}
 	return string(b)
 }
@@ -89,7 +93,11 @@ func (h *GroupHandler) ListJoined(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
-	c.JSON(http.StatusOK, groups)
+	result := make([]any, 0, len(groups))
+	for _, group := range groups {
+		result = append(result, groupResponse(group, group.TeacherID == userID.(int32)))
+	}
+	c.JSON(http.StatusOK, result)
 }
 
 // GET /api/v1/groups/:id
@@ -98,12 +106,16 @@ func (h *GroupHandler) Get(c *gin.Context) {
 	if err != nil {
 		return
 	}
+	if !requireGroupRead(c, h.pool, id, false) {
+		return
+	}
 	group, err := h.q.GetGroupByID(context.Background(), id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
 		return
 	}
-	c.JSON(http.StatusOK, group)
+	uid, _ := c.Get("user_id")
+	c.JSON(http.StatusOK, groupResponse(group, group.TeacherID == uid.(int32)))
 }
 
 // GET /api/v1/groups/:id/students
@@ -112,10 +124,13 @@ func (h *GroupHandler) ListStudents(c *gin.Context) {
 	if err != nil {
 		return
 	}
+	if !requireGroupRead(c, h.pool, id, true) {
+		return
+	}
 	limit, offset := parsePagination(c)
 	pgRows, err := h.pool.Query(context.Background(), `
 		SELECT u.id, u.phone, u.first_name, u.last_name, u.middle_name, u.city,
-		       u.role_id, u.password_hash, u.telegram_chat_id, u.is_banned,
+		       u.role_id, u.is_banned,
 		       u.created_at, u.updated_at, u.profile_subject1, u.profile_subject2, u.avatar_url
 		FROM users u
 		JOIN user_groups ug ON ug.user_id = u.id
@@ -128,17 +143,17 @@ func (h *GroupHandler) ListStudents(c *gin.Context) {
 		return
 	}
 	defer pgRows.Close()
-	students := []db.User{}
+	students := []studentSummary{}
 	for pgRows.Next() {
 		var u db.User
 		if err := pgRows.Scan(&u.ID, &u.Phone, &u.FirstName, &u.LastName,
-			&u.MiddleName, &u.City, &u.RoleID, &u.PasswordHash,
-			&u.TelegramChatID, &u.IsBanned, &u.CreatedAt, &u.UpdatedAt,
+			&u.MiddleName, &u.City, &u.RoleID,
+			&u.IsBanned, &u.CreatedAt, &u.UpdatedAt,
 			&u.ProfileSubject1, &u.ProfileSubject2, &u.AvatarUrl); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
 		}
-		students = append(students, u)
+		students = append(students, studentSummary{ID: u.ID, FirstName: u.FirstName, LastName: u.LastName, AvatarURL: u.AvatarUrl})
 	}
 	if err := pgRows.Err(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
@@ -252,7 +267,7 @@ func (h *GroupHandler) JoinGroup(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "Вы уже состоите в этой группе"})
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"group": group, "membership": entry})
+	c.JSON(http.StatusCreated, gin.H{"group": groupResponse(group, false), "membership": entry})
 }
 
 // DELETE /api/v1/groups/:id/leave  (student leaves a group)

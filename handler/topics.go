@@ -31,12 +31,12 @@ func (h *TopicHandler) ListTests(c *gin.Context) {
 	ctx := context.Background()
 
 	type testRow struct {
-		ID          int32   `json:"id"`
-		Title       string  `json:"title"`
-		Description string  `json:"description"`
-		MaxAttempts int16   `json:"max_attempts"`
-		TimeLimit   *int16  `json:"time_limit"`
-		AuthorName  string  `json:"author_name"`
+		ID          int32  `json:"id"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		MaxAttempts int16  `json:"max_attempts"`
+		TimeLimit   *int16 `json:"time_limit"`
+		AuthorName  string `json:"author_name"`
 	}
 
 	rows, err := h.pool.Query(ctx, `
@@ -45,7 +45,7 @@ func (h *TopicHandler) ListTests(c *gin.Context) {
 		            ELSE 'Сгенерированный AI' END AS author_name
 		FROM tests t
 		LEFT JOIN users u ON u.id = t.created_by
-		WHERE t.is_published = TRUE AND t.is_public = TRUE AND t.topic_id = $1
+		WHERE t.is_published = TRUE AND t.is_public = TRUE AND t.generated_for IS NULL AND t.topic_id = $1
 		ORDER BY t.created_at DESC
 	`, topicID)
 	if err != nil {
@@ -94,7 +94,7 @@ func (h *TopicHandler) StartRandomTest(c *gin.Context) {
 	for _, t := range targets {
 		rows, err := h.pool.Query(ctx, `
 			SELECT id, points FROM questions
-			WHERE topic_id=$1 AND difficulty=$2
+			WHERE topic_id=$1 AND difficulty=$2 AND generation_allowed=TRUE
 			ORDER BY RANDOM()
 			LIMIT $3
 		`, topicID, t.diff, t.count)
@@ -124,10 +124,10 @@ func (h *TopicHandler) StartRandomTest(c *gin.Context) {
 
 	var testID int32
 	err = tx.QueryRow(ctx, `
-		INSERT INTO tests (title, is_published, is_public, max_attempts, topic_id)
-		VALUES ($1, TRUE, FALSE, 1, $2)
+		INSERT INTO tests (title, is_published, is_public, max_attempts, topic_id, generated_for)
+		VALUES ($1, TRUE, FALSE, 1, $2, $3)
 		RETURNING id
-	`, fmt.Sprintf("Случайный тест: %s", topicName), topicID).Scan(&testID)
+	`, fmt.Sprintf("Случайный тест: %s", topicName), topicID, c.MustGet("user_id").(int32)).Scan(&testID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return

@@ -11,7 +11,6 @@ interface Student {
   id: number;
   first_name: string;
   last_name: string;
-  phone: string;
 }
 
 interface Group {
@@ -127,7 +126,6 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
             >
               <div>
                 <p className="font-medium">{s.first_name} {s.last_name}</p>
-                <p className="text-sm text-muted-foreground">{s.phone}</p>
               </div>
               <Button
                 variant="ghost"

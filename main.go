@@ -110,10 +110,10 @@ func main() {
 			Password: cfg.SMTP.Password,
 			From:     cfg.SMTP.From,
 		}
-	} else if cfg.TelegramBotToken != "" {
-		sender = notify.TelegramSender{BotToken: cfg.TelegramBotToken}
-	} else {
+	} else if cfg.AllowLogOTP {
 		sender = notify.LogSender{}
+	} else {
+		log.Fatal("email OTP provider required")
 	}
 
 	if cfg.TelegramBotToken != "" && cfg.TelegramWebhookURL != "" {

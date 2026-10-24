@@ -66,7 +66,7 @@ type createLessonReq struct {
 	GroupID     *int32  `json:"group_id"`    // optional
 	Visibility  string  `json:"visibility"`  // all | school | course | private
 	TopicID     *int32  `json:"topic_id"`    // optional subject
-	SubtopicID  *int32  `json:"subtopic_id"`  // optional sub-subject
+	SubtopicID  *int32  `json:"subtopic_id"` // optional sub-subject
 }
 
 // POST /api/v1/groups/:id/lessons  OR  POST /api/v1/lessons
@@ -89,6 +89,10 @@ func (h *LessonHandler) Create(c *gin.Context) {
 		groupID = pgtype.Int4{Int32: *req.GroupID, Valid: true}
 	}
 
+	if groupID.Valid && !requireGroupRead(c, h.pool, groupID.Int32, true) {
+		return
+	}
+
 	var scheduledAt pgtype.Timestamptz
 	if req.ScheduledAt != nil && *req.ScheduledAt != "" {
 		if t, err := time.Parse(time.RFC3339, *req.ScheduledAt); err == nil {
@@ -103,6 +107,10 @@ func (h *LessonHandler) Create(c *gin.Context) {
 	vis := req.Visibility
 	if vis == "" {
 		vis = "private"
+	}
+	if !validLessonVisibility(vis) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid visibility"})
+		return
 	}
 
 	var topicID pgtype.Int4
@@ -149,6 +157,9 @@ func (h *LessonHandler) List(c *gin.Context) {
 	if err != nil {
 		return
 	}
+	if !requireGroupRead(c, h.pool, groupID, false) {
+		return
+	}
 	limit := int32(100)
 	offset := int32(0)
 	if l, err2 := strconv.Atoi(c.DefaultQuery("limit", "100")); err2 == nil && l > 0 {
@@ -166,7 +177,19 @@ func (h *LessonHandler) List(c *gin.Context) {
 	if lessons == nil {
 		lessons = []db.Lesson{}
 	}
-	c.JSON(http.StatusOK, lessons)
+	visible := make([]db.Lesson, 0, len(lessons))
+	uid, _ := c.Get("user_id")
+	for _, lesson := range lessons {
+		var allowed bool
+		if err := h.pool.QueryRow(c.Request.Context(), `SELECT EXISTS(SELECT 1 FROM lessons l WHERE l.id=$2 AND `+lessonReadPredicate+`)`, uid.(int32), lesson.ID).Scan(&allowed); err != nil {
+			c.JSON(500, gin.H{"error": "internal error"})
+			return
+		}
+		if allowed {
+			visible = append(visible, lesson)
+		}
+	}
+	c.JSON(http.StatusOK, visible)
 }
 
 // ─── List teacher's own lessons ───────────────────────────────────────────────
@@ -201,10 +224,10 @@ func (h *LessonHandler) ListMine(c *gin.Context) {
 
 	type mineLessonRow struct {
 		db.Lesson
-		GroupName  string `json:"group_name"`
-		TopicID    *int32 `json:"topic_id"`
-		TopicName  string `json:"topic_name"`
-		SubtopicID *int32 `json:"subtopic_id"`
+		GroupName    string `json:"group_name"`
+		TopicID      *int32 `json:"topic_id"`
+		TopicName    string `json:"topic_name"`
+		SubtopicID   *int32 `json:"subtopic_id"`
 		SubtopicName string `json:"subtopic_name"`
 	}
 	result := []mineLessonRow{}
@@ -259,48 +282,7 @@ func (h *LessonHandler) ListAvailable(c *gin.Context) {
 		LEFT JOIN groups g ON g.id = l.group_id
 		LEFT JOIN topics t ON t.id = l.topic_id
 		LEFT JOIN subtopics st ON st.id = l.subtopic_id
-		WHERE l.is_published = TRUE
-		  AND (
-		    -- Для всех
-		    l.visibility = 'all'
-
-		    -- Привязан к группе — ученик состоит в ней
-		    OR (l.group_id IS NOT NULL AND EXISTS (
-		      SELECT 1 FROM user_groups ug
-		      WHERE ug.user_id = $1 AND ug.group_id = l.group_id
-		    ))
-
-		    -- Для школьных групп учителя
-		    OR (l.visibility = 'school' AND l.created_by IS NOT NULL AND EXISTS (
-		      SELECT 1 FROM user_groups ug
-		      JOIN groups sg ON sg.id = ug.group_id
-		      WHERE ug.user_id = $1
-		        AND sg.category = 'school'
-		        AND sg.teacher_id = l.created_by
-		    ))
-
-		    -- Для курсовых групп учителя
-		    OR (l.visibility = 'course' AND l.created_by IS NOT NULL AND EXISTS (
-		      SELECT 1 FROM user_groups ug
-		      JOIN groups cg ON cg.id = ug.group_id
-		      WHERE ug.user_id = $1
-		        AND cg.category = 'course'
-		        AND cg.teacher_id = l.created_by
-		    ))
-
-		    -- Приватный — явный доступ
-		    OR (l.visibility = 'private' AND (
-		      EXISTS (
-		        SELECT 1 FROM lesson_access la
-		        WHERE la.lesson_id = l.id AND la.type = 'student' AND la.ref_id = $1
-		      )
-		      OR EXISTS (
-		        SELECT 1 FROM lesson_access la
-		        JOIN user_groups ug ON ug.group_id = la.ref_id
-		        WHERE la.lesson_id = l.id AND la.type = 'group' AND ug.user_id = $1
-		      )
-		    ))
-		  )
+		WHERE `+lessonReadPredicate+`
 		ORDER BY l.created_at DESC
 	`, uid)
 	if err != nil {
@@ -334,19 +316,19 @@ func (h *LessonHandler) ListAvailable(c *gin.Context) {
 	for rows.Next() {
 		var r lessonRow
 		var (
-			groupID       pgtype.Int4
-			description   pgtype.Text
-			scheduledAt   pgtype.Timestamptz
-			createdAt     pgtype.Timestamptz
-			updatedAt     pgtype.Timestamptz
-			sectionTitle  pgtype.Text
-			sectionNum    pgtype.Int2
-			orderNum      pgtype.Int2
-			isPublished   bool
-			viewCount     pgtype.Int4
-			createdBy     pgtype.Int4
-			topicID       pgtype.Int4
-			subtopicID    pgtype.Int4
+			groupID      pgtype.Int4
+			description  pgtype.Text
+			scheduledAt  pgtype.Timestamptz
+			createdAt    pgtype.Timestamptz
+			updatedAt    pgtype.Timestamptz
+			sectionTitle pgtype.Text
+			sectionNum   pgtype.Int2
+			orderNum     pgtype.Int2
+			isPublished  bool
+			viewCount    pgtype.Int4
+			createdBy    pgtype.Int4
+			topicID      pgtype.Int4
+			subtopicID   pgtype.Int4
 		)
 		if err := rows.Scan(
 			&r.ID, &groupID, &r.Title, &description, &scheduledAt,
@@ -403,6 +385,10 @@ func (h *LessonHandler) ListAvailable(c *gin.Context) {
 func (h *LessonHandler) Get(c *gin.Context) {
 	id, err := parseID(c, "id")
 	if err != nil {
+		return
+	}
+
+	if !h.requireLessonRead(c, id) {
 		return
 	}
 	lesson, err := h.q.GetLessonByID(context.Background(), id)
@@ -537,6 +523,10 @@ func (h *LessonHandler) Publish(c *gin.Context) {
 	if req.Visibility == "" {
 		req.Visibility = "all"
 	}
+	if !validLessonVisibility(req.Visibility) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid visibility"})
+		return
+	}
 	var lesson db.Lesson
 	err = h.pool.QueryRow(ctx, `
 		UPDATE lessons SET is_published=TRUE, visibility=$2 WHERE id=$1
@@ -573,6 +563,10 @@ func (h *LessonHandler) Unpublish(c *gin.Context) {
 func (h *LessonHandler) RecordView(c *gin.Context) {
 	id, err := parseID(c, "id")
 	if err != nil {
+		return
+	}
+
+	if !h.requireLessonRead(c, id) {
 		return
 	}
 	userID, _ := c.Get("user_id")
@@ -656,6 +650,10 @@ func (h *LessonHandler) GrantAccess(c *gin.Context) {
 	var req grantAccessReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if (req.Type != "group" && req.Type != "student") || req.RefID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid access grant"})
 		return
 	}
 	h.pool.Exec(ctx, `
@@ -763,6 +761,10 @@ const blockSelect = `
 func (h *LessonHandler) ListBlocks(c *gin.Context) {
 	lessonID, err := parseID(c, "id")
 	if err != nil {
+		return
+	}
+
+	if !h.requireLessonRead(c, lessonID) {
 		return
 	}
 	rows, err := h.pool.Query(context.Background(),

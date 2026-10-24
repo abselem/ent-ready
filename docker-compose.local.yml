@@ -1,0 +1,5 @@
+# Explicit local development override. Do not use with production data.
+services:
+  backend:
+    environment:
+      APP_ENV: development

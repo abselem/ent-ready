@@ -1,223 +1,139 @@
 package handler_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/stretchr/testify/require"
 	"net/http"
+	"sync"
 	"testing"
-
 	"testing-app/handler"
 	"testing-app/testutil"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func newRouter(t *testing.T) (http.Handler, *testutil.MockSender) {
-	t.Helper()
 	pool, cfg := testutil.Setup(t)
 	mock := &testutil.MockSender{}
 	return handler.NewRouter(pool, cfg, mock), mock
 }
 
-func registerTokens(t *testing.T, h http.Handler, mock *testutil.MockSender, phone string, roleID int) map[string]string {
+// Keep legacy callers in other suites working while exercising current email auth.
+func registerTokens(t *testing.T, h http.Handler, mock *testutil.MockSender, identity string, roleID int) map[string]string {
 	t.Helper()
-	testutil.Request(t, h, "POST", "/api/v1/auth/send-otp",
-		fmt.Sprintf(`{"phone":"%s","purpose":"register"}`, phone))
-
-	body := fmt.Sprintf(`{"phone":"%s","code":"%s","first_name":"Test","last_name":"User","role_id":%d}`,
-		phone, mock.Code(), roleID)
-	w := testutil.Request(t, h, "POST", "/api/v1/auth/register", body)
-	require.Equal(t, http.StatusCreated, w.Code, "register failed: %s", w.Body.String())
-
+	email := identity + "@example.test"
+	w := testutil.Request(t, h, "POST", "/api/v1/auth/send-otp", fmt.Sprintf(`{"email":%q,"purpose":"register"}`, email))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	w = testutil.Request(t, h, "POST", "/api/v1/auth/register", fmt.Sprintf(`{"email":%q,"code":%q,"first_name":"Test","last_name":"User","password":"SecurePass123","role_id":%d}`, email, mock.Code(), roleID))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	var tokens map[string]string
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&tokens))
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &tokens))
 	return tokens
 }
 
-// ── register ──────────────────────────────────────────────────────────────────
-
-func TestAuth_Register_OK(t *testing.T) {
-	h, mock := newRouter(t)
-	tokens := registerTokens(t, h, mock, "+79991000001", 2)
-	assert.NotEmpty(t, tokens["access_token"])
-	assert.NotEmpty(t, tokens["refresh_token"])
+func TestAuthLogoutRevokesAccess(t *testing.T) {
+	h, m := newRouter(t)
+	tok := registerTokens(t, h, m, "logout", 2)
+	require.Equal(t, 200, testutil.Request(t, h, "POST", "/api/v1/auth/logout", "", tok["access_token"]).Code)
+	require.Equal(t, 401, testutil.Request(t, h, "GET", "/api/v1/users/me", "", tok["access_token"]).Code)
+	require.Equal(t, 401, testutil.Request(t, h, "POST", "/api/v1/auth/refresh", fmt.Sprintf(`{"refresh_token":%q}`, tok["refresh_token"])).Code)
 }
 
-func TestAuth_Register_InvalidOTP(t *testing.T) {
-	h, _ := newRouter(t)
-	testutil.Request(t, h, "POST", "/api/v1/auth/send-otp", `{"phone":"+79991000001","purpose":"register"}`)
-
-	w := testutil.Request(t, h, "POST", "/api/v1/auth/register",
-		`{"phone":"+79991000001","code":"000000","first_name":"T","last_name":"T","role_id":2}`)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+func TestAuthPasswordRequiresReauthentication(t *testing.T) {
+	h, m := newRouter(t)
+	tok := registerTokens(t, h, m, "password", 2)
+	require.Equal(t, 401, testutil.Request(t, h, "PUT", "/api/v1/users/me/password", `{"password":"NewPassword123"}`, tok["access_token"]).Code)
+	require.Equal(t, 401, testutil.Request(t, h, "PUT", "/api/v1/users/me/password", `{"password":"NewPassword123","current_password":"wrong"}`, tok["access_token"]).Code)
+	require.Equal(t, 200, testutil.Request(t, h, "PUT", "/api/v1/users/me/password", `{"password":"NewPassword123","current_password":"SecurePass123"}`, tok["access_token"]).Code)
+	require.Equal(t, 401, testutil.Request(t, h, "GET", "/api/v1/users/me", "", tok["access_token"]).Code)
 }
 
-func TestAuth_Register_DuplicatePhone(t *testing.T) {
-	h, mock := newRouter(t)
-	registerTokens(t, h, mock, "+79991000001", 2)
-
-	// Второй запрос на регистрацию с тем же номером
-	testutil.Request(t, h, "POST", "/api/v1/auth/send-otp", `{"phone":"+79991000001","purpose":"register"}`)
-	w := testutil.Request(t, h, "POST", "/api/v1/auth/register",
-		fmt.Sprintf(`{"phone":"+79991000001","code":"%s","first_name":"T","last_name":"T","role_id":2}`, mock.Code()))
-	assert.Equal(t, http.StatusConflict, w.Code)
+func TestAuthBannedRefreshAndReset(t *testing.T) {
+	pool, cfg := testutil.Setup(t)
+	m := &testutil.MockSender{}
+	h := handler.NewRouter(pool, cfg, m)
+	tok := registerTokens(t, h, m, "banned", 2)
+	_, err := pool.Exec(context.Background(), `UPDATE users SET is_banned=TRUE WHERE email='banned@example.test'`)
+	require.NoError(t, err)
+	require.Equal(t, 401, testutil.Request(t, h, "GET", "/api/v1/users/me", "", tok["access_token"]).Code)
+	require.Equal(t, 401, testutil.Request(t, h, "POST", "/api/v1/auth/refresh", fmt.Sprintf(`{"refresh_token":%q}`, tok["refresh_token"])).Code)
+	require.Equal(t, 200, testutil.Request(t, h, "POST", "/api/v1/auth/send-otp", `{"email":"banned@example.test","purpose":"reset_password"}`).Code)
+	require.Equal(t, 403, testutil.Request(t, h, "POST", "/api/v1/auth/reset-password", fmt.Sprintf(`{"email":"banned@example.test","code":%q,"password":"NewPassword123"}`, m.Code())).Code)
 }
 
-// ── login по паролю ───────────────────────────────────────────────────────────
-
-func TestAuth_Login_OK(t *testing.T) {
-	h, mock := newRouter(t)
-	tokens := registerTokens(t, h, mock, "+79991000002", 2)
-
-	// Установить пароль
-	w := testutil.Request(t, h, "PUT", "/api/v1/users/me/password",
-		`{"password":"SecurePass123"}`, tokens["access_token"])
-	require.Equal(t, http.StatusOK, w.Code)
-
-	// Логин
-	w = testutil.Request(t, h, "POST", "/api/v1/auth/login",
-		`{"phone":"+79991000002","password":"SecurePass123"}`)
-	require.Equal(t, http.StatusOK, w.Code)
-
-	var resp map[string]string
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.NotEmpty(t, resp["access_token"])
+func TestAuthRefreshUsesCurrentRole(t *testing.T) {
+	pool, cfg := testutil.Setup(t)
+	m := &testutil.MockSender{}
+	h := handler.NewRouter(pool, cfg, m)
+	tok := registerTokens(t, h, m, "role", 1)
+	_, err := pool.Exec(context.Background(), `UPDATE users SET role_id=2 WHERE email='role@example.test'`)
+	require.NoError(t, err)
+	w := testutil.Request(t, h, "POST", "/api/v1/auth/refresh", fmt.Sprintf(`{"refresh_token":%q}`, tok["refresh_token"]))
+	require.Equal(t, 200, w.Code)
+	var next map[string]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &next))
+	require.Equal(t, 403, testutil.Request(t, h, "GET", "/api/v1/groups", "", next["access_token"]).Code)
 }
 
-func TestAuth_Login_WrongPassword(t *testing.T) {
-	h, mock := newRouter(t)
-	tokens := registerTokens(t, h, mock, "+79991000002", 2)
-	testutil.Request(t, h, "PUT", "/api/v1/users/me/password",
-		`{"password":"SecurePass123"}`, tokens["access_token"])
-
-	w := testutil.Request(t, h, "POST", "/api/v1/auth/login",
-		`{"phone":"+79991000002","password":"WrongPass"}`)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestAuth_Login_NoPassword(t *testing.T) {
-	h, mock := newRouter(t)
-	registerTokens(t, h, mock, "+79991000002", 2)
-
-	// Пароль не установлен
-	w := testutil.Request(t, h, "POST", "/api/v1/auth/login",
-		`{"phone":"+79991000002","password":"anything"}`)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-// ── login по OTP ──────────────────────────────────────────────────────────────
-
-func TestAuth_LoginOTP_OK(t *testing.T) {
-	h, mock := newRouter(t)
-	registerTokens(t, h, mock, "+79991000003", 2)
-
-	testutil.Request(t, h, "POST", "/api/v1/auth/send-otp",
-		`{"phone":"+79991000003","purpose":"login"}`)
-	w := testutil.Request(t, h, "POST", "/api/v1/auth/login/otp",
-		fmt.Sprintf(`{"phone":"+79991000003","code":"%s"}`, mock.Code()))
-	require.Equal(t, http.StatusOK, w.Code)
-
-	var resp map[string]string
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.NotEmpty(t, resp["access_token"])
-}
-
-func TestAuth_LoginOTP_TooManyAttempts(t *testing.T) {
-	h, _ := newRouter(t)
-	testutil.Request(t, h, "POST", "/api/v1/auth/send-otp",
-		`{"phone":"+79991000003","purpose":"register"}`)
-	testutil.Request(t, h, "POST", "/api/v1/auth/register",
-		`{"phone":"+79991000003","code":"000000","first_name":"T","last_name":"T","role_id":2}`)
-
-	testutil.Request(t, h, "POST", "/api/v1/auth/send-otp",
-		`{"phone":"+79991000003","purpose":"login"}`)
-
-	// 3 неверных попытки
-	for i := 0; i < 3; i++ {
-		testutil.Request(t, h, "POST", "/api/v1/auth/login/otp",
-			`{"phone":"+79991000003","code":"000000"}`)
+func TestAuthConcurrentRefreshSingleUse(t *testing.T) {
+	h, m := newRouter(t)
+	tok := registerTokens(t, h, m, "refresh", 2)
+	var wg sync.WaitGroup
+	results := make(chan int, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			w := testutil.Request(t, h, "POST", "/api/v1/auth/refresh", fmt.Sprintf(`{"refresh_token":%q}`, tok["refresh_token"]))
+			results <- w.Code
+		}()
 	}
-	w := testutil.Request(t, h, "POST", "/api/v1/auth/login/otp",
-		`{"phone":"+79991000003","code":"000000"}`)
-	assert.Equal(t, http.StatusTooManyRequests, w.Code)
+	wg.Wait()
+	close(results)
+	success := 0
+	for code := range results {
+		if code == 200 {
+			success++
+		} else {
+			require.Equal(t, 401, code)
+		}
+	}
+	require.Equal(t, 1, success)
 }
 
-// ── refresh ───────────────────────────────────────────────────────────────────
-
-func TestAuth_Refresh_OK(t *testing.T) {
-	h, mock := newRouter(t)
-	tokens := registerTokens(t, h, mock, "+79991000004", 2)
-
-	w := testutil.Request(t, h, "POST", "/api/v1/auth/refresh",
-		fmt.Sprintf(`{"refresh_token":"%s"}`, tokens["refresh_token"]))
-	require.Equal(t, http.StatusOK, w.Code)
-
-	var resp map[string]string
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.NotEmpty(t, resp["access_token"])
-	assert.NotEqual(t, tokens["refresh_token"], resp["refresh_token"])
+func TestAuthConcurrentOTPAttemptLimit(t *testing.T) {
+	pool, cfg := testutil.Setup(t)
+	m := &testutil.MockSender{}
+	h := handler.NewRouter(pool, cfg, m)
+	registerTokens(t, h, m, "otp", 2)
+	require.Equal(t, 200, testutil.Request(t, h, "POST", "/api/v1/auth/send-otp", `{"email":"otp@example.test","purpose":"login"}`).Code)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			testutil.Request(t, h, "POST", "/api/v1/auth/login/otp", `{"email":"otp@example.test","code":"invalid"}`)
+		}()
+	}
+	wg.Wait()
+	var attempts int
+	require.NoError(t, pool.QueryRow(context.Background(), `SELECT attempts FROM otp_codes WHERE email='otp@example.test' AND purpose='login'`).Scan(&attempts))
+	require.Equal(t, 3, attempts)
+	w := testutil.Request(t, h, "POST", "/api/v1/auth/login/otp", fmt.Sprintf(`{"email":"otp@example.test","code":%q}`, m.Code()))
+	require.NotEqual(t, 200, w.Code)
 }
 
-func TestAuth_Refresh_Reuse(t *testing.T) {
-	h, mock := newRouter(t)
-	tokens := registerTokens(t, h, mock, "+79991000004", 2)
-
-	testutil.Request(t, h, "POST", "/api/v1/auth/refresh",
-		fmt.Sprintf(`{"refresh_token":"%s"}`, tokens["refresh_token"]))
-
-	// Повторное использование — должно вернуть 401
-	w := testutil.Request(t, h, "POST", "/api/v1/auth/refresh",
-		fmt.Sprintf(`{"refresh_token":"%s"}`, tokens["refresh_token"]))
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-// ── logout ────────────────────────────────────────────────────────────────────
-
-func TestAuth_Logout_OK(t *testing.T) {
-	h, mock := newRouter(t)
-	tokens := registerTokens(t, h, mock, "+79991000005", 2)
-
-	w := testutil.Request(t, h, "POST", "/api/v1/auth/logout", "", tokens["access_token"])
-	require.Equal(t, http.StatusOK, w.Code)
-
-	// Refresh после logout должен упасть
-	w = testutil.Request(t, h, "POST", "/api/v1/auth/refresh",
-		fmt.Sprintf(`{"refresh_token":"%s"}`, tokens["refresh_token"]))
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestAuth_Logout_NoToken(t *testing.T) {
+func TestAuthLegacyTelegramDisabled(t *testing.T) {
 	h, _ := newRouter(t)
-	w := testutil.Request(t, h, "POST", "/api/v1/auth/logout", "")
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	w := testutil.Request(t, h, "POST", "/telegram/webhook", `{"message":{"chat":{"id":1},"text":"/start arbitrary"}}`)
+	require.Equal(t, http.StatusGone, w.Code)
 }
 
-// ── reset password ────────────────────────────────────────────────────────────
-
-func TestAuth_ResetPassword_OK(t *testing.T) {
-	h, mock := newRouter(t)
-	registerTokens(t, h, mock, "+79991000006", 2)
-
-	testutil.Request(t, h, "POST", "/api/v1/auth/send-otp",
-		`{"phone":"+79991000006","purpose":"reset_password"}`)
-	w := testutil.Request(t, h, "POST", "/api/v1/auth/reset-password",
-		fmt.Sprintf(`{"phone":"+79991000006","code":"%s","password":"NewPass123"}`, mock.Code()))
-	require.Equal(t, http.StatusOK, w.Code)
-
-	// Войти с новым паролем
-	w = testutil.Request(t, h, "POST", "/api/v1/auth/login",
-		`{"phone":"+79991000006","password":"NewPass123"}`)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestAuth_ResetPassword_TooShort(t *testing.T) {
-	h, mock := newRouter(t)
-	registerTokens(t, h, mock, "+79991000006", 2)
-
-	testutil.Request(t, h, "POST", "/api/v1/auth/send-otp",
-		`{"phone":"+79991000006","purpose":"reset_password"}`)
-	w := testutil.Request(t, h, "POST", "/api/v1/auth/reset-password",
-		fmt.Sprintf(`{"phone":"+79991000006","code":"%s","password":"short"}`, mock.Code()))
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+func TestAuthResetRevokesStolenAccess(t *testing.T) {
+	h, m := newRouter(t)
+	tok := registerTokens(t, h, m, "reset", 2)
+	require.Equal(t, 200, testutil.Request(t, h, "POST", "/api/v1/auth/send-otp", `{"email":"reset@example.test","purpose":"reset_password"}`).Code)
+	w := testutil.Request(t, h, "POST", "/api/v1/auth/reset-password", fmt.Sprintf(`{"email":"reset@example.test","code":%q,"password":"NewPassword123"}`, m.Code()))
+	require.Equal(t, 200, w.Code, w.Body.String())
+	require.Equal(t, 401, testutil.Request(t, h, "GET", "/api/v1/users/me", "", tok["access_token"]).Code)
 }

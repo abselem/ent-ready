@@ -56,7 +56,7 @@ func (h *UserHandler) GetMe(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
 	}
-	c.JSON(http.StatusOK, user)
+	c.JSON(http.StatusOK, userResponse(user))
 }
 
 // PUT /api/v1/users/me
@@ -99,7 +99,7 @@ func (h *UserHandler) UpdateMe(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
-	c.JSON(http.StatusOK, user)
+	c.JSON(http.StatusOK, userResponse(user))
 }
 
 // PUT /api/v1/users/me/phone
@@ -125,7 +125,8 @@ func (h *UserHandler) UpdatePhone(c *gin.Context) {
 
 // PUT /api/v1/users/me/password
 type setPasswordReq struct {
-	Password string `json:"password" binding:"required,min=8"`
+	CurrentPassword string `json:"current_password"`
+	Password        string `json:"password" binding:"required,min=8"`
 }
 
 func (h *UserHandler) SetPassword(c *gin.Context) {
@@ -136,18 +137,36 @@ func (h *UserHandler) SetPassword(c *gin.Context) {
 		return
 	}
 
+	user, err := h.q.GetUserByID(c.Request.Context(), userID.(int32))
+	if err != nil || !user.PasswordHash.Valid || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash.String), []byte(req.CurrentPassword)) != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "current password required; use email reset if no password is set"})
+		return
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
 
-	if err := h.q.UpdatePassword(context.Background(), db.UpdatePasswordParams{
-		ID:           userID.(int32),
-		PasswordHash: pgtype.Text{String: string(hash), Valid: true},
-	}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+	tx, err := h.pool.Begin(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "password update failed"})
 		return
 	}
+	defer tx.Rollback(c.Request.Context())
+	tag, err := tx.Exec(c.Request.Context(), `UPDATE users SET password_hash=$2 WHERE id=$1 AND password_hash=$3 AND is_banned=FALSE`, userID.(int32), string(hash), user.PasswordHash.String)
+	if err != nil || tag.RowsAffected() != 1 {
+		c.JSON(http.StatusConflict, gin.H{"error": "account changed; authenticate again"})
+		return
+	}
+	if _, err = tx.Exec(c.Request.Context(), `UPDATE sessions SET revoked_at=NOW() WHERE user_id=$1 AND revoked_at IS NULL`, userID.(int32)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "session revocation failed"})
+		return
+	}
+	if err = tx.Commit(c.Request.Context()); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "password update failed"})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{"message": "password updated"})
 }

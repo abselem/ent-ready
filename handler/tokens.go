@@ -35,6 +35,13 @@ type RefreshClaims struct {
 }
 
 func (h *AuthHandler) issueTokens(c *gin.Context, userID int32, roleCode string) (TokenPair, db.Session, error) {
+	var banned bool
+	if err := h.pool.QueryRow(c.Request.Context(), `SELECT u.is_banned,r.code FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=$1`, userID).Scan(&banned, &roleCode); err != nil {
+		return TokenPair{}, db.Session{}, err
+	}
+	if banned {
+		return TokenPair{}, db.Session{}, fmt.Errorf("account blocked")
+	}
 	secret := randomHex(32)
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.DefaultCost)
@@ -85,7 +92,7 @@ func parseRefreshToken(tokenStr, secret string) (*RefreshClaims, error) {
 	var claims RefreshClaims
 	t, err := jwt.ParseWithClaims(tokenStr, &claims, func(*jwt.Token) (interface{}, error) {
 		return []byte(secret), nil
-	})
+	}, jwt.WithValidMethods([]string{"HS256"}), jwt.WithExpirationRequired())
 	if err != nil || !t.Valid {
 		return nil, fmt.Errorf("invalid token")
 	}

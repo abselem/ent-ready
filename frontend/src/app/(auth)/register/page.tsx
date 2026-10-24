@@ -3,12 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
-import { api, saveTokens } from "@/lib/api";
+import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Card, CardHeader } from "@/components/ui/card";
 
 type Step = "email" | "code" | "details";
 
@@ -84,7 +83,6 @@ export default function RegisterPage() {
         password,
         role_id: roleId,
       });
-      saveTokens(data.access_token, data.refresh_token);
       setTokens(data.access_token, data.refresh_token);
       const { data: user } = await api.get("/users/me");
       setUser(user);
@@ -101,29 +99,19 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-muted/30">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <div className="flex items-center gap-3 mb-2">
-            <Image src="/logo.png" alt="ENT Ready" width={40} height={40} className="rounded-xl" />
-            <div>
-              <p className="font-bold text-xl leading-tight">
-                <span style={{ color: "#ffffff" }}>ENT </span>
-                <span style={{ color: "#26C0BD" }}>Ready</span>
-              </p>
-              <p className="text-xs text-muted-foreground">Платформа для подготовки к ЕНТ</p>
-            </div>
-          </div>
-          <CardTitle className="text-base">Регистрация</CardTitle>
-          <CardContent className="p-0 mt-0.5 text-sm text-muted-foreground">
-            {step === "email" && "Введите ваш email"}
-            {step === "code" && `Код отправлен на ${email}`}
-            {step === "details" && "Заполните данные профиля"}
-          </CardContent>
+    <div>
+      <Card className="w-full p-6 md:p-8" aria-busy={loading}>
+        <CardHeader className="mb-6">
+          <h1 className="text-2xl font-semibold tracking-tight">Создать аккаунт</h1>
+          <p className="mt-2 break-words text-sm leading-relaxed text-muted-foreground">
+            {step === "email" && "Начните с email — отправим код подтверждения."}
+            {step === "code" && "Подтвердите email с помощью кода из письма."}
+            {step === "details" && "Выберите роль и заполните данные профиля."}
+          </p>
         </CardHeader>
 
         {/* Progress bar */}
-        <div className="flex gap-1 mb-6">
+        <div role="progressbar" aria-label="Этап регистрации" aria-valuemin={1} aria-valuemax={3} aria-valuenow={stepIndex + 1} aria-valuetext={`Шаг ${stepIndex + 1} из 3`} className="flex gap-1 mb-6">
           {STEPS.map((s, i) => (
             <div key={s} className={`h-1 flex-1 rounded-full transition-colors ${
               stepIndex >= i ? "bg-primary" : "bg-muted"
@@ -140,7 +128,7 @@ export default function RegisterPage() {
               value={email} onChange={e => { setEmail(e.target.value); setError(""); }}
               autoComplete="email"
             />
-            {error && <p className="text-sm text-destructive">{error}</p>}
+            {error && <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive-surface p-3 text-sm text-destructive">{error}</p>}
             <Button
               size="lg" loading={loading} onClick={handleSendOTP}
               disabled={!email.trim()} className="w-full"
@@ -153,7 +141,7 @@ export default function RegisterPage() {
         {/* Step 2: OTP code */}
         {step === "code" && (
           <div className="flex flex-col gap-4">
-            <div className="bg-muted/50 rounded-xl p-3 text-sm text-muted-foreground">
+            <div role="status" className="break-words bg-muted/50 rounded-xl p-3 text-sm text-muted-foreground">
               Мы отправили 4-значный код на <span className="text-foreground font-medium">{email}</span>
             </div>
             <Input
@@ -162,20 +150,20 @@ export default function RegisterPage() {
               value={code} onChange={e => { setCode(e.target.value.replace(/\D/g, "")); setError(""); }}
               autoComplete="one-time-code"
             />
-            {error && <p className="text-sm text-destructive">{error}</p>}
+            {error && <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive-surface p-3 text-sm text-destructive">{error}</p>}
             <Button size="lg" onClick={handleVerifyCode} disabled={code.length < 4} className="w-full">
               Продолжить
             </Button>
-            <div className="flex items-center justify-between text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
               <button onClick={() => { setStep("email"); setCode(""); setError(""); }}
-                className="text-muted-foreground hover:text-foreground">
+                className="min-h-11 text-muted-foreground hover:text-foreground">
                 ← Изменить email
               </button>
               {resendCooldown > 0 ? (
                 <span className="text-muted-foreground">Повтор через {resendCooldown}с</span>
               ) : (
                 <button onClick={handleSendOTP} disabled={loading}
-                  className="text-primary hover:underline disabled:opacity-50">
+                  className="min-h-11 text-primary hover:underline disabled:opacity-50">
                   Отправить снова
                 </button>
               )}
@@ -187,12 +175,12 @@ export default function RegisterPage() {
         {step === "details" && (
           <form onSubmit={handleRegister} className="flex flex-col gap-3">
             <div className="flex rounded-lg border border-border overflow-hidden">
-              <button type="button" onClick={() => setRoleId(2)}
-                className={`flex-1 py-2 text-sm font-medium transition-colors ${roleId === 2 ? "bg-primary text-primary-foreground" : "bg-card hover:bg-muted"}`}>
+              <button type="button" aria-pressed={roleId === 2} onClick={() => setRoleId(2)}
+                className={`min-h-11 flex-1 px-2 py-2 text-sm font-medium transition-colors ${roleId === 2 ? "bg-primary text-primary-foreground" : "bg-card hover:bg-muted"}`}>
                 Ученик
               </button>
-              <button type="button" onClick={() => setRoleId(1)}
-                className={`flex-1 py-2 text-sm font-medium transition-colors ${roleId === 1 ? "bg-primary text-primary-foreground" : "bg-card hover:bg-muted"}`}>
+              <button type="button" aria-pressed={roleId === 1} onClick={() => setRoleId(1)}
+                className={`min-h-11 flex-1 px-2 py-2 text-sm font-medium transition-colors ${roleId === 1 ? "bg-primary text-primary-foreground" : "bg-card hover:bg-muted"}`}>
                 Учитель
               </button>
             </div>
@@ -204,13 +192,13 @@ export default function RegisterPage() {
               value={password} onChange={e => setPassword(e.target.value)} required />
             <Input id="passwordConfirm" label="Повторите пароль" type="password" placeholder="••••••••"
               value={passwordConfirm} onChange={e => setPasswordConfirm(e.target.value)} required />
-            {error && <p className="text-sm text-destructive">{error}</p>}
+            {error && <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive-surface p-3 text-sm text-destructive">{error}</p>}
             <Button type="submit" size="lg" loading={loading} className="w-full"
               disabled={!firstName.trim() || !lastName.trim() || !password || !passwordConfirm}>
               Зарегистрироваться
             </Button>
             <button type="button" onClick={() => { setStep("code"); setError(""); }}
-              className="text-sm text-muted-foreground hover:text-foreground">
+              className="min-h-11 text-sm text-muted-foreground hover:text-foreground">
               ← Назад
             </button>
           </form>
@@ -218,7 +206,7 @@ export default function RegisterPage() {
 
         <p className="text-center text-sm text-muted-foreground mt-4">
           Уже есть аккаунт?{" "}
-          <Link href="/login" className="text-primary hover:underline">Войти</Link>
+          <Link href="/login" className="inline-flex min-h-11 items-center text-primary hover:underline">Войти</Link>
         </p>
       </Card>
     </div>

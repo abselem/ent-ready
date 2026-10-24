@@ -40,8 +40,7 @@ type EmailSender struct {
 
 func (e EmailSender) SendOTP(_ context.Context, emailTo string, _ int64, code string) error {
 	if e.Host == "" || e.Username == "" {
-		log.Printf("[OTP] email=%s code=%s (SMTP not configured)", emailTo, code)
-		return nil
+		return fmt.Errorf("SMTP not configured")
 	}
 
 	subject := "Ваш код подтверждения — ENT Ready"
@@ -54,7 +53,7 @@ func (e EmailSender) SendOTP(_ context.Context, emailTo string, _ int64, code st
 		e.From, emailTo, subject, body,
 	)
 
-	addr := fmt.Sprintf("%s:%s", e.Host, e.Port)
+	addr := net.JoinHostPort(e.Host, e.Port)
 	auth := smtp.PlainAuth("", e.Username, e.Password, e.Host)
 
 	// Try STARTTLS (port 587)
@@ -140,8 +139,7 @@ type TelegramSender struct {
 
 func (t TelegramSender) SendOTP(ctx context.Context, recipient string, chatID int64, code string) error {
 	if chatID == 0 {
-		log.Printf("[OTP] to=%s code=%s (no telegram)", recipient, code)
-		return nil
+		return fmt.Errorf("telegram recipient not linked")
 	}
 
 	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", t.BotToken)

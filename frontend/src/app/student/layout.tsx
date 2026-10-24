@@ -82,7 +82,7 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
   return (
     <div className="flex h-full">
       <Nav items={studentNav} />
-      <main className="flex-1 overflow-y-auto pb-16 md:pb-0">
+      <main id="main-content" className="app-main mobile-nav-space flex-1 overflow-y-auto">
         {children}
       </main>
     </div>

@@ -2,137 +2,60 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { Check, LogOut } from "lucide-react";
 import { useAuthStore } from "@/store/auth";
-import { clearTokens, apiOrigin } from "@/lib/api";
+import { apiOrigin, signOut } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-export interface NavItem {
-  href: string;
-  label: string;
-  icon: React.ReactNode;
-}
-
-interface NavProps {
-  items: NavItem[];
-}
-
-function Logo() {
-  return (
-    <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-8 h-8 shrink-0">
-      <rect x="6" y="6" width="88" height="88" rx="22" stroke="#26C0BD" strokeWidth="9" strokeLinecap="round"/>
-      <path d="M24 52 L42 70 L76 32" stroke="#26C0BD" strokeWidth="11" strokeLinecap="round" strokeLinejoin="round"/>
-    </svg>
-  );
-}
-
-function Avatar({ user }: { user: { first_name: string; last_name: string; avatar_url?: { String: string; Valid: boolean } | null } | null }) {
-  if (!user) return null;
-  const raw = user.avatar_url?.Valid ? user.avatar_url.String : null;
-  const src = raw ? (raw.startsWith("/static/") ? `${apiOrigin}${raw}` : raw) : null;
-  const initials = `${user.first_name[0] ?? ""}${user.last_name[0] ?? ""}`.toUpperCase();
-
-  return src ? (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={src} alt={user.first_name} className="w-8 h-8 rounded-full object-cover shrink-0 border border-border" />
-  ) : (
-    <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-xs font-bold text-primary-foreground shrink-0">
-      {initials}
-    </div>
-  );
-}
+export interface NavItem { href: string; label: string; icon: React.ReactNode }
+interface NavProps { items: NavItem[] }
 
 export function Nav({ items }: NavProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, logout } = useAuthStore();
+  const { user } = useAuthStore();
+  const active = (href: string) => pathname === href || (href !== "/teacher" && href !== "/student" && pathname.startsWith(`${href}/`));
+  const raw = typeof user?.avatar_url === "string" ? user.avatar_url : null;
+  const avatar = raw ? (raw.startsWith("/static/") ? `${apiOrigin}${raw}` : raw) : null;
+  const initials = `${user?.first_name?.[0] ?? ""}${user?.last_name?.[0] ?? ""}`.toUpperCase();
+  const teacher = user?.role_id === 1;
 
-  function handleLogout() {
-    clearTokens();
-    logout();
-    router.push("/login");
+  function confirmLeave() {
+    return document.body.dataset.activeAttempt !== "true" || window.confirm("Выйти из теста? Вернуться к этой обычной попытке после перехода пока нельзя. Уже отправленные ответы останутся на сервере.");
   }
+  function guardNavigation(event: React.MouseEvent<HTMLAnchorElement>) {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.currentTarget.pathname === pathname) return;
+    if (!confirmLeave()) event.preventDefault();
+  }
+  async function handleLogout() { if (!confirmLeave()) return; await signOut(); router.push("/login"); }
 
-  return (
-    <>
-      {/* Desktop sidebar */}
-      <aside className="hidden md:flex flex-col w-56 shrink-0 border-r border-border bg-card h-full">
-        <div className="px-4 py-4 border-b border-border">
-          <div className="flex items-center gap-2.5">
-            <Logo />
-            <div className="min-w-0">
-              <p className="font-bold text-base leading-tight whitespace-nowrap">
-                <span style={{ color: "#ffffff" }}>ENT </span>
-                <span style={{ color: "#26C0BD" }}>Ready</span>
-              </p>
-              {user && (
-                <p className="text-xs text-muted-foreground truncate leading-tight mt-0.5">
-                  {user.first_name} {user.last_name}
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <nav className="flex-1 py-4 px-2 flex flex-col gap-1">
-          {items.map((item) => {
-            const active = pathname === item.href || (item.href !== "/teacher" && item.href !== "/student" && pathname.startsWith(item.href));
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
-                  active
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                )}
-              >
-                <span className="w-4 h-4 shrink-0">{item.icon}</span>
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
-
-        {/* User row at bottom */}
-        <div className="px-4 py-3 border-t border-border flex items-center gap-2.5">
-          <Avatar user={user} />
-          <div className="min-w-0 flex-1">
-            {user && <p className="text-xs font-medium truncate">{user.first_name} {user.last_name}</p>}
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors mt-0.5"
-            >
-              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-                <polyline points="16 17 21 12 16 7"/>
-                <line x1="21" y1="12" x2="9" y2="12"/>
-              </svg>
-              Выйти
-            </button>
-          </div>
-        </div>
-      </aside>
-
-      {/* Mobile bottom bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-card border-t border-border flex">
-        {items.map((item) => {
-          const active = pathname === item.href || (item.href !== "/teacher" && item.href !== "/student" && pathname.startsWith(item.href));
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                "flex-1 flex flex-col items-center justify-center py-2 gap-0.5 text-xs font-medium transition-colors",
-                active ? "text-primary" : "text-muted-foreground"
-              )}
-            >
-              <span className="w-5 h-5">{item.icon}</span>
-              {item.label}
-            </Link>
-          );
-        })}
+  return <>
+    <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-lg focus:bg-card focus:p-3">К содержимому</a>
+    <aside className="hidden h-full w-56 shrink-0 flex-col border-r border-border bg-card md:flex">
+      <Link href={teacher ? "/teacher" : "/student"} onClick={guardNavigation} className="mx-5 mt-7 mb-8 flex min-h-11 items-center gap-2.5 rounded-lg" aria-label="ENT Ready — главная">
+        <span className="flex size-9 items-center justify-center rounded-xl bg-accent text-primary"><Check aria-hidden="true" className="size-6" strokeWidth={2.5} /></span>
+        <span className="text-lg font-semibold tracking-tight text-foreground">ENT <span className="text-primary">Ready</span></span>
+      </Link>
+      <p className="mb-3 px-6 text-[11px] font-semibold tracking-[.12em] text-muted-foreground uppercase">{teacher ? "Пространство учителя" : "Моя подготовка"}</p>
+      <nav aria-label="Основная навигация" className="flex flex-1 flex-col gap-1 px-3">
+        {items.map((item) => <Link key={item.href} href={item.href} onClick={guardNavigation} aria-current={active(item.href) ? "page" : undefined}
+          className={cn("flex min-h-11 items-center gap-3 rounded-[10px] px-3 py-2 text-sm transition-colors", active(item.href) ? "bg-accent font-semibold text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}>
+          <span aria-hidden="true" className="size-[18px] shrink-0">{item.icon}</span><span>{item.label}</span>
+        </Link>)}
       </nav>
-    </>
-  );
+      <div className="mx-4 mt-6 border-t border-border py-5">
+        <div className="flex items-center gap-2.5 px-1">
+          {avatar ? <img src={avatar} alt="" className="size-9 rounded-full object-cover" /> : <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-semibold text-primary">{initials}</span>}
+          <div className="min-w-0"><p className="truncate text-sm font-medium">{user?.first_name} {user?.last_name}</p><p className="text-xs text-muted-foreground">{teacher ? "Учитель" : "Ученик"}</p></div>
+        </div>
+        <button onClick={handleLogout} className="mt-3 flex min-h-11 w-full items-center gap-2 rounded-lg px-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut aria-hidden="true" className="size-4" />Выйти</button>
+      </div>
+    </aside>
+    <nav aria-label="Основная навигация на телефоне" className="fixed right-0 bottom-0 left-0 z-40 flex border-t border-border bg-card pb-[env(safe-area-inset-bottom)] md:hidden">
+      {items.map((item) => <Link key={item.href} href={item.href} onClick={guardNavigation} aria-current={active(item.href) ? "page" : undefined}
+        className={cn("flex min-h-16 min-w-0 flex-1 flex-col items-center justify-center gap-1 px-1 py-2 text-[11px] leading-tight", active(item.href) ? "bg-accent font-semibold text-primary" : "text-muted-foreground")}>
+        <span aria-hidden="true" className="size-5 shrink-0">{item.icon}</span><span className="max-w-full">{item.label}</span>
+      </Link>)}
+    </nav>
+  </>;
 }

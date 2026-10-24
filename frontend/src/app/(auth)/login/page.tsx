@@ -3,12 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
-import { api, saveTokens } from "@/lib/api";
+import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Card, CardHeader } from "@/components/ui/card";
 
 type Mode = "password" | "otp";
 
@@ -66,7 +65,6 @@ export default function LoginPage() {
         ? await api.post("/auth/login", { identifier: identifier.trim(), password })
         : await api.post("/auth/login/otp", { email: identifier.trim().toLowerCase(), code });
 
-      saveTokens(data.access_token, data.refresh_token);
       setTokens(data.access_token, data.refresh_token);
 
       const { data: user } = await api.get("/users/me");
@@ -80,34 +78,22 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-muted/30">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <div className="flex items-center gap-3 mb-2">
-            <Image src="/logo.png" alt="ENT Ready" width={40} height={40} className="rounded-xl" />
-            <div>
-              <p className="font-bold text-xl leading-tight">
-                <span style={{ color: "#ffffff" }}>ENT </span>
-                <span style={{ color: "#26C0BD" }}>Ready</span>
-              </p>
-              <p className="text-xs text-muted-foreground">Платформа для подготовки к ЕНТ</p>
-            </div>
-          </div>
-          <CardTitle className="text-base">Вход в аккаунт</CardTitle>
-          <CardContent className="p-0 mt-0.5 text-sm text-muted-foreground">
-            Введите данные для входа
-          </CardContent>
+    <div>
+      <Card className="w-full p-6 md:p-8" aria-busy={loading}>
+        <CardHeader className="mb-6">
+          <h1 className="text-2xl font-semibold tracking-tight">С возвращением</h1>
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">Войдите в аккаунт, чтобы продолжить подготовку.</p>
         </CardHeader>
 
         {/* Mode switcher — только для email */}
         {identifierIsEmail && (
           <div className="flex rounded-lg border border-border overflow-hidden mb-5">
-            <button onClick={() => { setMode("password"); setError(""); setOtpSent(false); }}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${mode === "password" ? "bg-primary text-primary-foreground" : "bg-card hover:bg-muted"}`}>
+            <button type="button" aria-pressed={mode === "password"} onClick={() => { setMode("password"); setError(""); setOtpSent(false); }}
+              className={`min-h-11 flex-1 px-2 py-2 text-sm font-medium transition-colors ${mode === "password" ? "bg-primary text-primary-foreground" : "bg-card hover:bg-muted"}`}>
               Пароль
             </button>
-            <button onClick={() => { setMode("otp"); setError(""); }}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${mode === "otp" ? "bg-primary text-primary-foreground" : "bg-card hover:bg-muted"}`}>
+            <button type="button" aria-pressed={mode === "otp"} onClick={() => { setMode("otp"); setError(""); }}
+              className={`min-h-11 flex-1 px-2 py-2 text-sm font-medium transition-colors ${mode === "otp" ? "bg-primary text-primary-foreground" : "bg-card hover:bg-muted"}`}>
               Код на email
             </button>
           </div>
@@ -145,7 +131,7 @@ export default function LoginPage() {
                 </Button>
               ) : (
                 <>
-                  <div className="bg-muted/50 rounded-xl p-3 text-sm text-muted-foreground">
+                  <div role="status" className="break-words bg-muted/50 rounded-xl p-3 text-sm text-muted-foreground">
                     Код отправлен на <span className="text-foreground font-medium">{identifier}</span>
                   </div>
                   <Input
@@ -154,16 +140,16 @@ export default function LoginPage() {
                     value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ""))}
                     autoComplete="one-time-code"
                   />
-                  <div className="flex items-center justify-between text-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                     <button type="button" onClick={() => { setOtpSent(false); setCode(""); }}
-                      className="text-muted-foreground hover:text-foreground">
+                      className="min-h-11 text-muted-foreground hover:text-foreground">
                       ← Изменить email
                     </button>
                     {resendCooldown > 0 ? (
                       <span className="text-muted-foreground">Повтор через {resendCooldown}с</span>
                     ) : (
                       <button type="button" onClick={handleSendOTP} disabled={loading}
-                        className="text-primary hover:underline disabled:opacity-50">
+                        className="min-h-11 text-primary hover:underline disabled:opacity-50">
                         Отправить снова
                       </button>
                     )}
@@ -173,7 +159,7 @@ export default function LoginPage() {
             </>
           )}
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive-surface p-3 text-sm text-destructive">{error}</p>}
 
           <Button
             type="submit" size="lg" loading={loading} className="w-full"
@@ -185,7 +171,7 @@ export default function LoginPage() {
 
         <p className="text-center text-sm text-muted-foreground mt-4">
           Нет аккаунта?{" "}
-          <Link href="/register" className="text-primary hover:underline">
+          <Link href="/register" className="inline-flex min-h-11 items-center text-primary hover:underline">
             Зарегистрироваться
           </Link>
         </p>

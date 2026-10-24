@@ -60,14 +60,14 @@ func (h *AuthHandler) getUserByEmail(ctx context.Context, email string) (db.User
 func (h *AuthHandler) getOTPByEmail(ctx context.Context, email, purpose string) (db.OtpCode, error) {
 	var o db.OtpCode
 	err := h.pool.QueryRow(ctx, `
-		SELECT id, phone, email, code, purpose, attempts, is_used, expires_at, created_at
-		FROM otp_codes
+		UPDATE otp_codes SET attempts=attempts+1 WHERE id=(SELECT id FROM otp_codes
 		WHERE email = $1
 		  AND purpose = $2
 		  AND is_used = FALSE
 		  AND expires_at > NOW()
 		ORDER BY created_at DESC
-		LIMIT 1
+		LIMIT 1) AND attempts < 3 AND is_used=FALSE AND expires_at>NOW()
+        RETURNING id, phone, email, code, purpose, attempts, is_used, expires_at, created_at
 	`, email, purpose).Scan(
 		&o.ID, &o.Phone, &o.Email, &o.Code, &o.Purpose,
 		&o.Attempts, &o.IsUsed, &o.ExpiresAt, &o.CreatedAt,
@@ -161,16 +161,20 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный или истёкший код"})
 		return
 	}
-	if otp.Attempts >= 3 {
+	if otp.Attempts > 3 {
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Слишком много попыток"})
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(otp.Code), []byte(req.Code)); err != nil {
-		_ = h.q.IncrementOTPAttempts(context.Background(), otp.ID)
+		// Attempt reserved atomically before bcrypt.
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный код"})
 		return
 	}
-	_ = h.q.MarkOTPUsed(context.Background(), otp.ID)
+	tag, err := h.pool.Exec(c.Request.Context(), `UPDATE otp_codes SET is_used=TRUE WHERE id=$1 AND is_used=FALSE AND expires_at>NOW()`, otp.ID)
+	if err != nil || tag.RowsAffected() != 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "code already consumed"})
+		return
+	}
 
 	// Hash password
 	pwHash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
@@ -293,7 +297,16 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	_ = h.q.RevokeSession(context.Background(), session.ID)
+	var banned bool
+	if err := h.pool.QueryRow(c.Request.Context(), `SELECT is_banned FROM users WHERE id=$1`, session.UserID).Scan(&banned); err != nil || banned {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "account inactive"})
+		return
+	}
+	tag, err := h.pool.Exec(c.Request.Context(), `UPDATE sessions SET revoked_at=NOW() WHERE id=$1 AND revoked_at IS NULL AND expires_at>NOW()`, session.ID)
+	if err != nil || tag.RowsAffected() != 1 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "session already consumed"})
+		return
+	}
 
 	tokens, _, err := h.issueTokens(c, session.UserID, claims.Role)
 	if err != nil {
@@ -344,16 +357,20 @@ func (h *AuthHandler) LoginOTP(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный или истёкший код"})
 		return
 	}
-	if otp.Attempts >= 3 {
+	if otp.Attempts > 3 {
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Слишком много попыток"})
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(otp.Code), []byte(req.Code)); err != nil {
-		_ = h.q.IncrementOTPAttempts(context.Background(), otp.ID)
+		// Attempt reserved atomically before bcrypt.
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный код"})
 		return
 	}
-	_ = h.q.MarkOTPUsed(context.Background(), otp.ID)
+	tag, err := h.pool.Exec(c.Request.Context(), `UPDATE otp_codes SET is_used=TRUE WHERE id=$1 AND is_used=FALSE AND expires_at>NOW()`, otp.ID)
+	if err != nil || tag.RowsAffected() != 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "code already consumed"})
+		return
+	}
 
 	tokens, _, err := h.issueTokens(c, user.ID, h.roleCode(context.Background(), user.RoleID))
 	if err != nil {
@@ -383,16 +400,20 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный или истёкший код"})
 		return
 	}
-	if otp.Attempts >= 3 {
+	if otp.Attempts > 3 {
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Слишком много попыток"})
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(otp.Code), []byte(req.Code)); err != nil {
-		_ = h.q.IncrementOTPAttempts(context.Background(), otp.ID)
+		// Attempt reserved atomically before bcrypt.
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный код"})
 		return
 	}
-	_ = h.q.MarkOTPUsed(context.Background(), otp.ID)
+	tag, err := h.pool.Exec(c.Request.Context(), `UPDATE otp_codes SET is_used=TRUE WHERE id=$1 AND is_used=FALSE AND expires_at>NOW()`, otp.ID)
+	if err != nil || tag.RowsAffected() != 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "code already consumed"})
+		return
+	}
 
 	user, err := h.getUserByEmail(context.Background(), req.Email)
 	if err != nil {
@@ -405,11 +426,27 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
-	_ = h.q.UpdatePassword(context.Background(), db.UpdatePasswordParams{
-		ID:           user.ID,
-		PasswordHash: pgtype.Text{String: string(hash), Valid: true},
-	})
-	_ = h.q.RevokeAllUserSessions(context.Background(), user.ID)
+	if user.IsBanned {
+		c.JSON(http.StatusForbidden, gin.H{"error": "account blocked"})
+		return
+	}
+	tx, err := h.pool.Begin(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "password reset failed"})
+		return
+	}
+	defer tx.Rollback(c.Request.Context())
+	if _, err = tx.Exec(c.Request.Context(), `UPDATE users SET password_hash=$2 WHERE id=$1 AND is_banned=FALSE`, user.ID, string(hash)); err == nil {
+		_, err = tx.Exec(c.Request.Context(), `UPDATE sessions SET revoked_at=NOW() WHERE user_id=$1 AND revoked_at IS NULL`, user.ID)
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "password reset failed"})
+		return
+	}
+	if err = tx.Commit(c.Request.Context()); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "password reset failed"})
+		return
+	}
 
 	tokens, _, err := h.issueTokens(c, user.ID, h.roleCode(context.Background(), user.RoleID))
 	if err != nil {

@@ -1,0 +1,9 @@
+node_modules
+.next
+.git
+.env
+.env.*
+npm-audit.json
+lint-*.json
+tests
+*.log

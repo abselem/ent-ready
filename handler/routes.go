@@ -49,14 +49,14 @@ func NewRouter(pool *pgxpool.Pool, cfg *config.Config, n notify.Sender) *gin.Eng
 		a.POST("/send-otp", middleware.IPLimit(authRL, 5, time.Minute), auth.SendOTP)
 		a.POST("/register", auth.Register)
 		a.POST("/login", middleware.IPLimit(authRL, 10, time.Minute), auth.Login)
-		a.POST("/login/otp", auth.LoginOTP)
+		a.POST("/login/otp", middleware.IPLimit(authRL, 10, time.Minute), auth.LoginOTP)
 		a.POST("/refresh", auth.Refresh)
-		a.POST("/reset-password", auth.ResetPassword)
+		a.POST("/reset-password", middleware.IPLimit(authRL, 10, time.Minute), auth.ResetPassword)
 		a.GET("/config", tg.AuthConfig)
 	}
 
 	// Защищённые маршруты
-	secure := v1.Group("/", middleware.JWT(cfg.JWT.AccessSecret))
+	secure := v1.Group("/", middleware.JWT(cfg.JWT.AccessSecret, pool))
 	{
 		secure.POST("/auth/logout", auth.Logout)
 
