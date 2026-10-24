@@ -2,8 +2,10 @@ package config
 
 import (
 	"fmt"
+	"net/mail"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -15,6 +17,7 @@ type Config struct {
 	JWT                 JWTConfig
 	SMTP                SMTPConfig
 	Resend              ResendConfig
+	Brevo               BrevoConfig
 	ServerAddr          string
 	TelegramBotToken    string
 	TelegramBotUsername string
@@ -34,6 +37,12 @@ type SMTPConfig struct {
 type ResendConfig struct {
 	APIKey string
 	From   string
+}
+
+type BrevoConfig struct {
+	APIKey    string
+	FromEmail string
+	FromName  string
 }
 
 type DBConfig struct {
@@ -81,13 +90,25 @@ func Load() (*Config, error) {
 	}
 
 	allowLog := os.Getenv("APP_ENV") == "development" || os.Getenv("APP_ENV") == "test"
-	if !allowLog && os.Getenv("RESEND_API_KEY") == "" && (os.Getenv("SMTP_HOST") == "" || os.Getenv("SMTP_USERNAME") == "") {
+	brevo := BrevoConfig{
+		APIKey:    strings.TrimSpace(os.Getenv("BREVO_API_KEY")),
+		FromEmail: strings.TrimSpace(os.Getenv("BREVO_FROM_EMAIL")),
+		FromName:  getEnv("BREVO_FROM_NAME", "ENT Ready"),
+	}
+	if brevo.APIKey != "" {
+		address, err := mail.ParseAddress(brevo.FromEmail)
+		if err != nil || address.Address != brevo.FromEmail {
+			return nil, fmt.Errorf("BREVO_FROM_EMAIL must be a valid sender email address")
+		}
+	}
+	if !allowLog && brevo.APIKey == "" && os.Getenv("RESEND_API_KEY") == "" && (os.Getenv("SMTP_HOST") == "" || os.Getenv("SMTP_USERNAME") == "") {
 		return nil, fmt.Errorf("production requires configured email OTP delivery")
 	}
 	dbPort, _ := strconv.Atoi(getEnv("POSTGRES_PORT", "5432"))
 
 	return &Config{
 		AllowLogOTP: allowLog,
+		Brevo:       brevo,
 		DB: DBConfig{
 			URL:      os.Getenv("DATABASE_URL"), // Railway injects this automatically
 			Host:     getEnv("POSTGRES_HOST", "localhost"),

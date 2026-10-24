@@ -97,7 +97,13 @@ func main() {
 	}
 
 	var sender notify.Sender
-	if cfg.Resend.APIKey != "" {
+	if cfg.Brevo.APIKey != "" {
+		sender = notify.BrevoSender{
+			APIKey:    cfg.Brevo.APIKey,
+			FromEmail: cfg.Brevo.FromEmail,
+			FromName:  cfg.Brevo.FromName,
+		}
+	} else if cfg.Resend.APIKey != "" {
 		sender = notify.ResendSender{
 			APIKey: cfg.Resend.APIKey,
 			From:   cfg.Resend.From,
