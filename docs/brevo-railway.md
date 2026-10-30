@@ -12,6 +12,7 @@ BREVO_API_KEY=<ключ из Brevo>
 BREVO_FROM_EMAIL=<подтверждённый email отправителя>
 BREVO_FROM_NAME=ENT Ready
 APP_ENV=production
+OTP_DEMO_MODE=false
 ```
 
 Для текущего проекта выбран отправитель `abselem.2001@gmail.com`: после его подтверждения задайте `BREVO_FROM_EMAIL=abselem.2001@gmail.com`.

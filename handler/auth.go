@@ -111,6 +111,9 @@ func (h *AuthHandler) SendOTP(c *gin.Context) {
 	}
 
 	code := randomOTP4()
+	if h.cfg.DemoOTP {
+		code = "0000"
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(code), bcrypt.DefaultCost)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
@@ -128,6 +131,10 @@ func (h *AuthHandler) SendOTP(c *gin.Context) {
 		return
 	}
 
+	if h.cfg.DemoOTP {
+		c.JSON(http.StatusOK, gin.H{"message": "code sent"})
+		return
+	}
 	if err := h.notifier.SendOTP(c.Request.Context(), req.Email, 0, code); err != nil {
 		log.Printf("[OTP] send error for %s: %v", req.Email, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Не удалось отправить код. Попробуйте позже."})

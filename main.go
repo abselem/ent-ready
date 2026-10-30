@@ -97,7 +97,10 @@ func main() {
 	}
 
 	var sender notify.Sender
-	if cfg.Brevo.APIKey != "" {
+	if cfg.DemoOTP {
+		log.Print("OTP demo mode enabled: fixed test codes, email delivery disabled; set OTP_DEMO_MODE=false before launch")
+		sender = notify.LogSender{}
+	} else if cfg.Brevo.APIKey != "" {
 		sender = notify.BrevoSender{
 			APIKey:    cfg.Brevo.APIKey,
 			FromEmail: cfg.Brevo.FromEmail,

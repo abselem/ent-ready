@@ -24,6 +24,7 @@ type Config struct {
 	TelegramWebhookURL  string
 	CORSOrigins         []string
 	OTPEnabled          bool
+	DemoOTP             bool
 }
 
 type SMTPConfig struct {
@@ -90,24 +91,31 @@ func Load() (*Config, error) {
 	}
 
 	allowLog := os.Getenv("APP_ENV") == "development" || os.Getenv("APP_ENV") == "test"
+	// Temporary pre-launch default, explicitly requested for the test site.
+	// Set OTP_DEMO_MODE=false to restore random codes and email delivery.
+	demoOTP, err := strconv.ParseBool(getEnv("OTP_DEMO_MODE", "true"))
+	if err != nil {
+		return nil, fmt.Errorf("OTP_DEMO_MODE must be true or false")
+	}
 	brevo := BrevoConfig{
 		APIKey:    strings.TrimSpace(os.Getenv("BREVO_API_KEY")),
 		FromEmail: strings.TrimSpace(os.Getenv("BREVO_FROM_EMAIL")),
 		FromName:  getEnv("BREVO_FROM_NAME", "ENT Ready"),
 	}
-	if brevo.APIKey != "" {
+	if !demoOTP && brevo.APIKey != "" {
 		address, err := mail.ParseAddress(brevo.FromEmail)
 		if err != nil || address.Address != brevo.FromEmail {
 			return nil, fmt.Errorf("BREVO_FROM_EMAIL must be a valid sender email address")
 		}
 	}
-	if !allowLog && brevo.APIKey == "" && os.Getenv("RESEND_API_KEY") == "" && (os.Getenv("SMTP_HOST") == "" || os.Getenv("SMTP_USERNAME") == "") {
+	if !demoOTP && !allowLog && brevo.APIKey == "" && os.Getenv("RESEND_API_KEY") == "" && (os.Getenv("SMTP_HOST") == "" || os.Getenv("SMTP_USERNAME") == "") {
 		return nil, fmt.Errorf("production requires configured email OTP delivery")
 	}
 	dbPort, _ := strconv.Atoi(getEnv("POSTGRES_PORT", "5432"))
 
 	return &Config{
 		AllowLogOTP: allowLog,
+		DemoOTP:     demoOTP,
 		Brevo:       brevo,
 		DB: DBConfig{
 			URL:      os.Getenv("DATABASE_URL"), // Railway injects this automatically
