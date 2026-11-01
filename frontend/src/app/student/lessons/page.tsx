@@ -44,6 +44,13 @@ function subjectCfg(name: string) {
   return subjectConfig[name] ?? { symbol: name.slice(0, 2).toUpperCase(), color: "#64748b" };
 }
 
+const visibilityLabel: Record<string, string> = {
+  all: "Для всех",
+  school: "Школа",
+  course: "Курс",
+  private: "Приватный",
+};
+
 export default function StudentLessonsPage() {
   const router = useRouter();
   const [search, setSearch] = useState("");
@@ -143,7 +150,7 @@ export default function StudentLessonsPage() {
                           <p className="text-xs text-muted-foreground truncate">{lesson.subtopic_name}</p>
                         )}
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          {lesson.group_name || "Публичный"}
+                          {lesson.group_name || visibilityLabel[lesson.visibility] || "Доступ предоставлен"}
                           {lesson.scheduled_at && ` · ${formatDate(lesson.scheduled_at)}`}
                           {lesson.duration_min > 0 && ` · ${lesson.duration_min} мин`}
                         </p>
