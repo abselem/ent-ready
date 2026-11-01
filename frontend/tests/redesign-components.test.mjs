@@ -28,7 +28,41 @@ function load(name) {
 const { AttemptResult } = load("@/components/test/attempt-result");
 const { Input } = load("@/components/ui/input");
 const { Button } = load("@/components/ui/button");
+const { LessonBlockView } = load("@/components/lesson/block-view");
+const { orderedLessonBlocks, lessonStepExcerpt } = load("@/components/lesson/types");
 const render = (component, props) => renderToStaticMarkup(React.createElement(component, props));
+
+const lessonBlock = (overrides = {}) => ({ id: 1, type: "text", content: "Материал", language: "", caption: "", order_num: 0, ...overrides });
+
+test("lesson steps retain legacy content and escape pasted HTML", () => {
+  const html = render(LessonBlockView, { block: lessonBlock({ type: "legacy", content: '<script>alert("x")</script>', caption: "Подпись" }) });
+  assert.match(html, /&lt;script&gt;/);
+  assert.doesNotMatch(html, /<script>/);
+  assert.match(html, /Подпись/);
+});
+
+test("lesson theory renders formulas and code stays literal", () => {
+  assert.match(render(LessonBlockView, { block: lessonBlock({ content: "$x^2$" }) }), /katex/);
+  const code = render(LessonBlockView, { block: lessonBlock({ type: "code", language: "html", content: '<img src=x onerror="alert(1)">' }) });
+  assert.match(code, /&lt;img/);
+  assert.doesNotMatch(code, /<img/);
+});
+
+test("lesson image rejects executable URLs and keeps a real caption", () => {
+  for (const content of ["javascript:alert(1)", "data:image/svg+xml,<svg/>", "//other.example/picture.png"]) {
+    assert.doesNotMatch(render(LessonBlockView, { block: lessonBlock({ type: "image", content }) }), /<img/);
+  }
+  const html = render(LessonBlockView, { block: lessonBlock({ type: "image", content: "https://example.test/image.png", caption: "Рисунок 1" }) });
+  assert.match(html, /alt="Рисунок 1"/);
+  assert.match(html, /<figcaption/);
+});
+
+test("lesson ordering is stable without modifying cached data; excerpts do not redefine captions", () => {
+  const blocks = [lessonBlock({ id: 3, order_num: 1 }), lessonBlock({ id: 2, order_num: 0 }), lessonBlock({ id: 1, order_num: 0 })];
+  assert.deepEqual(Array.from(orderedLessonBlocks(blocks), block => block.id), [1, 2, 3]);
+  assert.deepEqual(blocks.map(block => block.id), [3, 2, 1]);
+  assert.equal(lessonStepExcerpt(lessonBlock({ type: "image", content: "https://example.test/a", caption: "  Подпись   рисунка " })), "Подпись рисунка");
+});
 const question = { id: 1, text: "PRIVATE_QUESTION", points: 2, is_correct: false, options: [
   { id: 1, text: "PRIVATE_CORRECT_ANSWER", is_correct: true, chosen: false },
   { id: 2, text: "SELECTED_ANSWER", is_correct: false, chosen: true },

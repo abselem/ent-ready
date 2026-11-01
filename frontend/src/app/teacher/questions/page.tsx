@@ -404,6 +404,7 @@ function ImportView({ topics, onBack, onSaved }: {
   const [difficulty, setDifficulty] = useState<1|2|3>(1);
   const [saving, setSaving] = useState(false);
   const [savedCount, setSavedCount] = useState(0);
+  const [saveError, setSaveError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -476,7 +477,9 @@ function ImportView({ topics, onBack, onSaved }: {
 
   async function handleSave() {
     if (!parsed || !topicId) return;
-    setSaving(true); setSavedCount(0);
+    setSaving(true); setSavedCount(0); setSaveError("");
+    const savedQuestions = new Set<number>();
+    let failures = 0;
     const contextMap = new Map<number, IQ[]>();
     const regular: IQ[] = [];
     for (const q of parsed.questions) {
@@ -497,7 +500,8 @@ function ImportView({ topics, onBack, onSaved }: {
           })),
         });
         setSavedCount(c => c + qs.length);
-      } catch {}
+        qs.forEach(q => savedQuestions.add(parsed.questions.indexOf(q)));
+      } catch { failures += qs.length; }
     }
     for (const q of regular) {
       try {
@@ -507,9 +511,14 @@ function ImportView({ topics, onBack, onSaved }: {
           options: q.options.map((o, i) => ({ text: o.text, is_correct: q.correctIndices.has(i) })),
         });
         setSavedCount(c => c + 1);
-      } catch {}
+        savedQuestions.add(parsed.questions.indexOf(q));
+      } catch { failures += 1; }
     }
-    setSaving(false); onSaved();
+    setSaving(false);
+    if (failures > 0) {
+      setParsed(current => current ? { ...current, questions: current.questions.map((q, index) => savedQuestions.has(index) ? { ...q, include: false } : q) } : current);
+      setSaveError(`Сохранено ${savedQuestions.size}. Не удалось сохранить: ${failures}. Подтверждённо сохранённые вопросы сняты с выбора; проверьте оставшиеся перед повторной отправкой.`);
+    } else { onSaved(); }
   }
 
   const included = parsed?.questions.filter(q => q.include) ?? [];
@@ -577,6 +586,7 @@ function ImportView({ topics, onBack, onSaved }: {
         </Button>
       </div>
 
+      {saveError && <p role="alert" className="mb-4 text-sm text-destructive">{saveError}</p>}
       <div className="border border-border rounded-xl bg-card p-4 mb-4 flex flex-col gap-3">
         <div className="flex flex-col gap-1.5">
           <label className="text-sm font-medium">Тематика для всех <span className="text-destructive">*</span></label>
@@ -801,21 +811,21 @@ export default function QuestionBankPage() {
   const [search, setSearch] = useState("");
   const [filterTopic, setFilterTopic] = useState<number|"">("");
 
-  const { data: questions = [], isLoading } = useQuery<BankQuestion[]>({
+  const { data: questions = [], isLoading, isError: questionsError, refetch: refetchQuestions } = useQuery<BankQuestion[]>({
     queryKey: ["my-questions"],
-    queryFn: async () => (await api.get("/questions/mine")).data,
+    queryFn: async () => (await api.get("/questions/mine")).data ?? [],
   });
-  const { data: contexts = [], isLoading: ctxLoading } = useQuery<BankContext[]>({
+  const { data: contexts = [], isLoading: ctxLoading, isError: contextsError, refetch: refetchContexts } = useQuery<BankContext[]>({
     queryKey: ["my-contexts"],
-    queryFn: async () => (await api.get("/question-contexts/mine")).data,
+    queryFn: async () => (await api.get("/question-contexts/mine")).data ?? [],
   });
   const { data: topics = [] } = useQuery<Topic[]>({
     queryKey: ["topics"],
-    queryFn: async () => (await api.get("/topics")).data,
+    queryFn: async () => (await api.get("/topics")).data ?? [],
   });
   const { data: subtopics = [] } = useQuery<Subtopic[]>({
     queryKey: ["subtopics", topicId],
-    queryFn: async () => topicId ? (await api.get(`/topics/${topicId}/subtopics`)).data : [],
+    queryFn: async () => topicId ? (await api.get(`/topics/${topicId}/subtopics`)).data ?? [] : [],
     enabled: !!topicId,
   });
 
@@ -838,7 +848,7 @@ export default function QuestionBankPage() {
       sq.options.some(o => o.is_correct)
     );
 
-  const canSubmit = qtype === "context" ? ctxValid : (
+  const canSubmit = editId !== null ? !!text.trim() : qtype === "context" ? ctxValid : (
     text.trim() && topicId !== "" && (
       qtype === "matching" ? validPairs.length >= 2 : (hasCorrect && validOptions.length >= 2)
     )
@@ -963,7 +973,7 @@ export default function QuestionBankPage() {
             {/* Question type */}
             <div className="flex gap-2">
               {Q_TYPES.map(t => (
-                <button key={t.value} type="button" onClick={() => setQtype(t.value as typeof qtype)}
+                <button key={t.value} type="button" disabled={editId !== null} onClick={() => setQtype(t.value as typeof qtype)}
                   className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl border text-sm font-medium transition-colors ${
                     qtype === t.value ? "border-primary bg-primary/5 text-primary" : "border-border bg-card hover:bg-muted text-muted-foreground"}`}>
                   <span>{t.icon}</span><span>{t.label}</span>
@@ -1074,7 +1084,7 @@ export default function QuestionBankPage() {
                   )}
                 </div>
 
-                <ImageUploadField value={imageUrl} onChange={setImageUrl} />
+                {editId === null && <ImageUploadField value={imageUrl} onChange={setImageUrl} />}
 
                 {/* Topic */}
                 <div className="flex flex-col gap-1.5">
@@ -1108,7 +1118,7 @@ export default function QuestionBankPage() {
                 </div>
 
                 {/* Answers */}
-                {qtype === "matching"
+                {editId !== null ? <p className="text-sm text-muted-foreground">Сохраняются текст, тема, сложность и пояснение. Изображения сохраняются без изменений. Существующие варианты ответов остаются без изменений; редактировать их можно в редакторе теста, куда добавлен вопрос.</p> : qtype === "matching"
                   ? <MatchingEditor pairs={pairs} onChange={setPairs} />
                   : <OptionsEditor options={options} onChange={setOptions} multi={qtype === "multi"} />
                 }
@@ -1121,8 +1131,8 @@ export default function QuestionBankPage() {
                   <textarea rows={2} value={explanation} onChange={e => setExplanation(e.target.value)}
                     placeholder="Объяснение правильного ответа..."
                     className="border border-border rounded-xl px-3 py-2.5 text-sm bg-card resize-none focus:outline-none focus:ring-2 focus:ring-primary" />
-                  <ImageUploadField value={explanationImageUrl} onChange={setExplanationImageUrl}
-                    label="Изображение к пояснению" />
+                  {editId === null && <ImageUploadField value={explanationImageUrl} onChange={setExplanationImageUrl}
+                    label="Изображение к пояснению" />}
                 </div>
 
                 <div className="flex gap-2 pt-1">
@@ -1162,6 +1172,8 @@ export default function QuestionBankPage() {
       )}
 
       {/* Context blocks */}
+      {(questionsError || contextsError) && <div role="alert" className="mb-4 rounded-xl border border-destructive/30 p-4 text-sm"><p>Часть банка вопросов не удалось загрузить.</p><Button variant="outline" onClick={() => { void refetchQuestions(); void refetchContexts(); }}>Повторить</Button></div>}
+      {(createQuestion.isError || createContext.isError || updateQuestion.isError || deleteQuestion.isError || deleteContext.isError) && <p role="alert" className="mb-4 text-sm text-destructive">Не удалось сохранить изменения. Проверьте соединение и повторите действие.</p>}
       {(ctxLoading || displayedCtx.length > 0) && (
         <div className="flex flex-col gap-3 mb-3">
           {ctxLoading && [1,2].map(i => <div key={i} className="h-20 bg-muted/30 rounded-xl animate-pulse" />)}
@@ -1195,7 +1207,7 @@ export default function QuestionBankPage() {
       {/* Individual questions */}
       {isLoading ? (
         <div className="flex flex-col gap-3">{[1,2,3].map(i => <div key={i} className="h-16 bg-muted/30 rounded-xl animate-pulse" />)}</div>
-      ) : displayed.length === 0 && displayedCtx.length === 0 && !ctxLoading ? (
+      ) : displayed.length === 0 && displayedCtx.length === 0 && !ctxLoading && !questionsError && !contextsError ? (
         <div className="text-center py-12 text-muted-foreground">{totalCount === 0 ? "Нет вопросов в банке" : "Ничего не найдено"}</div>
       ) : (
         <div className="flex flex-col gap-3">

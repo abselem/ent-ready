@@ -606,7 +606,7 @@ func (h *LessonHandler) ListViewers(c *gin.Context) {
 		ViewedAt  string `json:"viewed_at"`
 	}
 	rows, err := h.pool.Query(ctx, `
-		SELECT u.id, u.first_name, u.last_name, u.phone,
+		SELECT u.id, u.first_name, u.last_name, COALESCE(u.phone, ''),
 		       to_char(lv.viewed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS viewed_at
 		FROM lesson_views lv
 		JOIN users u ON u.id = lv.user_id
@@ -623,9 +623,15 @@ func (h *LessonHandler) ListViewers(c *gin.Context) {
 	result := []viewerRow{}
 	for rows.Next() {
 		var r viewerRow
-		if rows.Scan(&r.UserID, &r.FirstName, &r.LastName, &r.Phone, &r.ViewedAt) == nil {
-			result = append(result, r)
+		if err := rows.Scan(&r.UserID, &r.FirstName, &r.LastName, &r.Phone, &r.ViewedAt); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
 		}
+		result = append(result, r)
+	}
+	if rows.Err() != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
 	}
 	c.JSON(http.StatusOK, result)
 }
@@ -777,9 +783,15 @@ func (h *LessonHandler) ListBlocks(c *gin.Context) {
 	blocks := []lessonBlock{}
 	for rows.Next() {
 		b, err := scanBlock(rows)
-		if err == nil {
-			blocks = append(blocks, b)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
 		}
+		blocks = append(blocks, b)
+	}
+	if rows.Err() != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
 	}
 	c.JSON(http.StatusOK, blocks)
 }
@@ -792,7 +804,7 @@ type createBlockReq struct {
 }
 
 func (h *LessonHandler) CreateBlock(c *gin.Context) {
-	ctx := context.Background()
+	ctx := c.Request.Context()
 	lessonID, err := parseID(c, "id")
 	if err != nil {
 		return
@@ -805,17 +817,46 @@ func (h *LessonHandler) CreateBlock(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	var maxOrder int16
-	h.pool.QueryRow(ctx, `SELECT COALESCE(MAX(order_num), -1) FROM lesson_blocks WHERE lesson_id=$1`, lessonID).Scan(&maxOrder)
+	switch req.Type {
+	case "text", "code", "image", "note":
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported lesson block type"})
+		return
+	}
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
+	defer tx.Rollback(ctx)
+	// Serialize append and reorder operations for this lesson.
+	var lockedID int32
+	if err := tx.QueryRow(ctx, `SELECT id FROM lessons WHERE id=$1 FOR UPDATE`, lessonID).Scan(&lockedID); err != nil {
+		c.JSON(404, gin.H{"error": "lesson not found"})
+		return
+	}
+	var maxOrder int32
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(order_num), -1)::INT FROM lesson_blocks WHERE lesson_id=$1`, lessonID).Scan(&maxOrder); err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
+	if maxOrder >= 32767 {
+		c.JSON(400, gin.H{"error": "too many lesson blocks"})
+		return
+	}
 	var b lessonBlock
-	err = h.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO lesson_blocks (lesson_id, type, content, language, caption, order_num)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, lesson_id, type, content, COALESCE(language,''), COALESCE(caption,''), order_num
 	`, lessonID, req.Type, req.Content, strOrNil(req.Language), strOrNil(req.Caption), maxOrder+1).
 		Scan(&b.ID, &b.LessonID, &b.Type, &b.Content, &b.Language, &b.Caption, &b.OrderNum)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
 		return
 	}
 	c.JSON(http.StatusCreated, b)
@@ -855,7 +896,7 @@ func (h *LessonHandler) UpdateBlock(c *gin.Context) {
 }
 
 func (h *LessonHandler) DeleteBlock(c *gin.Context) {
-	ctx := context.Background()
+	ctx := c.Request.Context()
 	blockID, err := parseID(c, "blockId")
 	if err != nil {
 		return
@@ -863,7 +904,15 @@ func (h *LessonHandler) DeleteBlock(c *gin.Context) {
 	if !h.requireBlockOwner(c, ctx, blockID) {
 		return
 	}
-	h.pool.Exec(ctx, `DELETE FROM lesson_blocks WHERE id=$1`, blockID)
+	tag, err := h.pool.Exec(ctx, `DELETE FROM lesson_blocks WHERE id=$1`, blockID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	if tag.RowsAffected() != 1 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "block not found"})
+		return
+	}
 	c.Status(http.StatusNoContent)
 }
 
@@ -875,19 +924,80 @@ type reorderBlocksReq struct {
 }
 
 func (h *LessonHandler) ReorderBlocks(c *gin.Context) {
+	ctx := c.Request.Context()
+	lessonID, err := parseID(c, "id")
+	if err != nil {
+		return
+	}
+	if _, ok := h.requireLessonOwner(c, ctx, lessonID); !ok {
+		return
+	}
 	var req reorderBlocksReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	userID, _ := c.Get("user_id")
-	ctx := context.Background()
+	ids := make(map[int32]bool, len(req.Order))
+	positions := make(map[int16]bool, len(req.Order))
 	for _, item := range req.Order {
-		h.pool.Exec(ctx, `
-			UPDATE lesson_blocks SET order_num=$2
-			WHERE id=$1
-			  AND lesson_id IN (SELECT id FROM lessons WHERE created_by=$3)
-		`, item.ID, item.OrderNum, userID.(int32))
+		if item.ID <= 0 || ids[item.ID] || item.OrderNum < 0 || int(item.OrderNum) >= len(req.Order) || positions[item.OrderNum] {
+			c.JSON(400, gin.H{"error": "invalid lesson block order"})
+			return
+		}
+		ids[item.ID] = true
+		positions[item.OrderNum] = true
+	}
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
+	defer tx.Rollback(ctx)
+	var lockedID int32
+	if err := tx.QueryRow(ctx, `SELECT id FROM lessons WHERE id=$1 FOR UPDATE`, lessonID).Scan(&lockedID); err != nil {
+		c.JSON(404, gin.H{"error": "lesson not found"})
+		return
+	}
+	// Validate the complete current membership before making any writes.
+	rows, err := tx.Query(ctx, `SELECT id FROM lesson_blocks WHERE lesson_id=$1 FOR UPDATE`, lessonID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
+	count := 0
+	valid := true
+	for rows.Next() {
+		var blockID int32
+		if err := rows.Scan(&blockID); err != nil {
+			rows.Close()
+			c.JSON(500, gin.H{"error": "internal error"})
+			return
+		}
+		count++
+		if !ids[blockID] {
+			valid = false
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
+	if !valid || count != len(req.Order) {
+		c.JSON(400, gin.H{"error": "order must contain every block of this lesson exactly once"})
+		return
+	}
+	for _, item := range req.Order {
+		tag, err := tx.Exec(ctx, `UPDATE lesson_blocks SET order_num=$3 WHERE id=$1 AND lesson_id=$2`, item.ID, lessonID, item.OrderNum)
+		if err != nil || tag.RowsAffected() != 1 {
+			c.JSON(500, gin.H{"error": "internal error"})
+			return
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
 	}
 	c.Status(http.StatusNoContent)
 }

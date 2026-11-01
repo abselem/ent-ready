@@ -53,6 +53,30 @@ const unauthorized = (config) => new axios.AxiosError("Unauthorized", "ERR_BAD_R
   ...response(config), status: 401,
 });
 
+for (const path of ["/auth/login", "/auth/login/otp", "/auth/reset-password"]) {
+  test(`public credential error at ${path} stays in the form without refresh or redirect`, async () => {
+    const { store, api, window } = harness();
+    store.getState().setTokens("existing", "existing-refresh");
+    api.defaults.adapter = async config => { throw unauthorized(config); };
+    await assert.rejects(api.post(path, {}), error => error.response?.status === 401);
+    assert.equal(window.location.href, "");
+    assert.equal(store.getState().accessToken, "existing");
+  });
+}
+
+test("a wrong current password does not revoke the active frontend session", async () => {
+  const { store, api, window } = harness();
+  store.getState().setTokens("existing", "existing-refresh");
+  api.defaults.adapter = async config => {
+    const error = unauthorized(config);
+    error.response.data = { error: "current password required; use email reset if no password is set" };
+    throw error;
+  };
+  await assert.rejects(api.put("/users/me/password", {}));
+  assert.equal(window.location.href, "");
+  assert.equal(store.getState().accessToken, "existing");
+});
+
 test("late successful response from account A is cancelled after login as B", async () => {
   const { store, api } = harness();
   store.getState().setTokens("A", "refresh-A");

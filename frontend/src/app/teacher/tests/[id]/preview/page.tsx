@@ -36,7 +36,7 @@ export default function TestPreviewPage({ params }: { params: Promise<{ id: stri
   const { id } = use(params);
   const router = useRouter();
 
-  const { data, isLoading } = useQuery<TestFull & { questions: Question[] }>({
+  const { data, isLoading, isError, refetch } = useQuery<TestFull & { questions: Question[] }>({
     queryKey: ["test-full", id],
     queryFn: async () => {
       const { data } = await api.get(`/tests/${id}`);
@@ -47,7 +47,7 @@ export default function TestPreviewPage({ params }: { params: Promise<{ id: stri
   if (isLoading) {
     return <div className="p-6 text-muted-foreground">Загрузка...</div>;
   }
-  if (!data) return null;
+  if (isError || !data) return <div className="page-shell"><p role="alert">Не удалось открыть тест.</p><Button onClick={() => void refetch()}>Повторить</Button></div>;
 
   const test = data;
   const questions = data.questions;

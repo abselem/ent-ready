@@ -2,14 +2,17 @@
 
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useRouter, useParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import Link from "next/link";
-import { api, apiOrigin } from "@/lib/api";
+import { api } from "@/lib/api";
+import { AsyncState } from "@/components/ui/async-state";
+import { LessonStepPlayer } from "@/components/lesson/step-player";
+import type { LessonBlock } from "@/components/lesson/types";
 
 interface Lesson {
   id: number;
   title: string;
-  group_id: number;
+  group_id: number | null;
   scheduled_at: string | null;
   duration_min: number;
   section_title: string | null;
@@ -17,14 +20,6 @@ interface Lesson {
   order_num: number;
 }
 
-interface Block {
-  id: number;
-  type: string;
-  content: string;
-  language: string;
-  caption: string;
-  order_num: number;
-}
 
 interface Section {
   num: number;
@@ -45,53 +40,52 @@ function groupBySections(lessons: Lesson[]): Section[] {
 export default function StudentLessonPage() {
   const { id } = useParams();
   const lessonId = Number(id);
-  const router = useRouter();
 
-  const { data: lesson, isError } = useQuery<Lesson>({
+  const { data: lesson, isError, isPending: lessonPending, refetch: refetchLesson } = useQuery<Lesson>({
     queryKey: ["lesson", lessonId],
     queryFn: async () => (await api.get(`/lessons/${lessonId}`)).data,
-    enabled: !!lessonId,
+    enabled: Number.isInteger(lessonId) && lessonId > 0,
   });
-
-  useEffect(() => { if (isError) router.push("/student/lessons"); }, [isError, router]);
 
   const { data: groupLessons = [] } = useQuery<Lesson[]>({
     queryKey: ["group-lessons-sidebar", lesson?.group_id],
-    queryFn: async () => (await api.get(`/groups/${lesson!.group_id}/lessons?limit=200`)).data,
+    queryFn: async () => (await api.get(`/groups/${lesson!.group_id}/lessons?limit=200`)).data ?? [],
     enabled: !!lesson?.group_id,
   });
 
-  const { data: blocks = [], isLoading: blocksLoading } = useQuery<Block[]>({
+  const { data: blocks = [], isLoading: blocksLoading, isError: blocksError, refetch: refetchBlocks } = useQuery<LessonBlock[]>({
     queryKey: ["lesson-blocks", lessonId],
-    queryFn: async () => (await api.get(`/lessons/${lessonId}/blocks`)).data,
-    enabled: !!lessonId,
+    queryFn: async () => (await api.get(`/lessons/${lessonId}/blocks`)).data ?? [],
+    enabled: Number.isInteger(lessonId) && lessonId > 0,
   });
 
   // Record unique view once per lesson per user
   useEffect(() => {
-    if (lessonId) api.post(`/lessons/${lessonId}/view`).catch(() => {});
-  }, [lessonId]);
+    if (lesson?.id) api.post(`/lessons/${lesson.id}/view`).catch(() => {});
+  }, [lesson?.id]);
 
   const sections = groupBySections(groupLessons);
 
   // Global lesson index for number display
-  const lessonIndex = groupLessons
-    .sort((a, b) => (a.section_num - b.section_num) || (a.order_num - b.order_num))
-    .findIndex(l => l.id === lessonId);
+  const sortedLessons = [...groupLessons].sort((a, b) => (a.section_num - b.section_num) || (a.order_num - b.order_num));
+  const lessonIndex = sortedLessons.findIndex(l => l.id === lessonId);
 
   function formatDate(iso: string | null) {
     if (!iso) return null;
     return new Date(iso).toLocaleDateString("ru-RU", { day: "2-digit", month: "long", year: "numeric" });
   }
 
+  if (!Number.isInteger(lessonId) || lessonId <= 0 || isError) return <div className="page-shell"><AsyncState kind="error" title="Урок недоступен" onRetry={() => void refetchLesson()} /><Link className="mt-4 inline-flex min-h-11 items-center text-primary" href="/student/lessons">К списку уроков</Link></div>;
+  if (lessonPending) return <div className="page-shell"><AsyncState kind="loading" title="Загружаем урок" /></div>;
+
   return (
     <div className="flex">
       {/* ── Sidebar ── */}
-      <aside className="hidden md:flex flex-col w-64 shrink-0 border-r border-border bg-[#0f172a] sticky top-0 overflow-y-auto" style={{ height: "100vh" }}>
+      {groupLessons.length > 0 && <aside className="hidden xl:flex flex-col w-64 shrink-0 border-r border-border bg-card sticky top-0 overflow-y-auto" style={{ height: "100vh" }}>
         {/* Back link */}
-        <div className="px-4 py-3 border-b border-white/10">
+        <div className="px-4 py-3 border-b border-border">
           <Link href="/student/lessons"
-            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors">
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
             <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="m15 18-6-6 6-6"/>
             </svg>
@@ -100,17 +94,17 @@ export default function StudentLessonPage() {
         </div>
 
         {/* Sections + lessons */}
-        <nav className="py-3 flex flex-col gap-0.5 overflow-y-auto flex-1">
+        <nav aria-label="Другие уроки группы" className="py-3 flex flex-col gap-0.5 overflow-y-auto flex-1">
           {sections.map((section) => (
             <div key={section.num}>
               {/* Section header */}
               {(section.title || sections.length > 1) && (
-                <p className="px-4 pt-3 pb-1 text-xs font-semibold text-slate-400 uppercase tracking-widest">
+                <p className="px-4 pt-3 pb-1 text-xs font-semibold text-muted-foreground uppercase tracking-widest">
                   {section.num}&nbsp;&nbsp;{section.title ?? `Раздел ${section.num}`}
                 </p>
               )}
               {/* Lessons in section */}
-              {section.lessons
+              {[...section.lessons]
                 .sort((a, b) => a.order_num - b.order_num)
                 .map((l, li) => {
                   const isActive = l.id === lessonId;
@@ -118,16 +112,16 @@ export default function StudentLessonPage() {
                     <Link
                       key={l.id}
                       href={`/student/lessons/${l.id}`}
-                      className={`flex items-center gap-2.5 pl-4 pr-3 py-1.5 text-sm transition-colors relative ${
+                      className={`flex min-h-11 items-center gap-2.5 pl-4 pr-3 py-2 text-sm transition-colors relative ${
                         isActive
-                          ? "bg-primary/20 text-primary-foreground font-medium"
-                          : "text-slate-400 hover:bg-white/5 hover:text-white"
+                          ? "bg-accent text-primary font-medium"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
                       }`}
                     >
                       {isActive && (
                         <span className="absolute right-0 top-0 bottom-0 w-0.5 bg-primary rounded-l" />
                       )}
-                      <span className={`text-xs font-mono shrink-0 w-7 ${isActive ? "text-primary" : "text-slate-500"}`}>
+                      <span className={`text-xs font-mono shrink-0 w-7 ${isActive ? "text-primary" : "text-muted-foreground"}`}>
                         {section.num}.{li + 1}
                       </span>
                       <span className="truncate leading-snug">{l.title}</span>
@@ -142,7 +136,7 @@ export default function StudentLessonPage() {
             </div>
           ))}
         </nav>
-      </aside>
+      </aside>}
 
       {/* ── Main content ── */}
       <div className="flex-1 min-w-0">
@@ -150,7 +144,7 @@ export default function StudentLessonPage() {
 
           {/* Mobile back */}
           <Link href="/student/lessons"
-            className="md:hidden flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-5 transition-colors">
+            className={`${groupLessons.length > 0 ? "xl:hidden" : ""} flex min-h-11 items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-5 transition-colors`}>
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="m15 18-6-6 6-6"/>
             </svg>
@@ -165,7 +159,7 @@ export default function StudentLessonPage() {
                   {lesson.section_num}.{lesson.order_num}&nbsp; {lesson.section_title}
                 </p>
               )}
-              <h1 className="text-2xl font-bold leading-tight mb-1">{lesson.title}</h1>
+              <h1 className="break-words text-2xl font-semibold leading-tight mb-1">{lesson.title}</h1>
               {lesson.scheduled_at && (
                 <p className="text-sm text-muted-foreground">
                   {formatDate(lesson.scheduled_at)}
@@ -177,7 +171,7 @@ export default function StudentLessonPage() {
           )}
 
           {/* Blocks */}
-          {blocksLoading ? (
+          {blocksError ? <AsyncState kind="error" title="Не удалось загрузить содержимое урока" onRetry={() => void refetchBlocks()} /> : blocksLoading ? (
             <div className="flex flex-col gap-4">
               {[1, 2, 3].map(i => <div key={i} className="h-16 bg-muted/30 rounded-lg animate-pulse" />)}
             </div>
@@ -186,25 +180,23 @@ export default function StudentLessonPage() {
               Содержимое урока пока не добавлено.
             </p>
           ) : (
-            <div className="flex flex-col gap-5">
-              {blocks.map(block => <BlockView key={block.id} block={block} />)}
-            </div>
+            <LessonStepPlayer blocks={blocks} />
           )}
 
           {/* Prev / Next navigation */}
           {groupLessons.length > 1 && (
-            <div className="flex items-center justify-between mt-10 pt-6 border-t border-border gap-3">
+            <div className="flex flex-wrap items-center justify-between mt-10 pt-6 border-t border-border gap-3">
               {lessonIndex > 0 ? (
-                <Link href={`/student/lessons/${groupLessons[lessonIndex - 1]?.id}`}
-                  className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
+                <Link href={`/student/lessons/${sortedLessons[lessonIndex - 1]?.id}`}
+                  className="flex min-h-11 min-w-0 items-center gap-2 break-words text-sm text-muted-foreground hover:text-foreground transition-colors">
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6"/></svg>
-                  {groupLessons[lessonIndex - 1]?.title}
+                  {sortedLessons[lessonIndex - 1]?.title}
                 </Link>
               ) : <span />}
-              {lessonIndex < groupLessons.length - 1 ? (
-                <Link href={`/student/lessons/${groupLessons[lessonIndex + 1]?.id}`}
-                  className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors ml-auto">
-                  {groupLessons[lessonIndex + 1]?.title}
+              {lessonIndex >= 0 && lessonIndex < sortedLessons.length - 1 ? (
+                <Link href={`/student/lessons/${sortedLessons[lessonIndex + 1]?.id}`}
+                  className="flex min-h-11 min-w-0 items-center gap-2 break-words text-sm text-muted-foreground hover:text-foreground transition-colors ml-auto">
+                  {sortedLessons[lessonIndex + 1]?.title}
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m9 18 6-6-6-6"/></svg>
                 </Link>
               ) : <span />}
@@ -214,54 +206,4 @@ export default function StudentLessonPage() {
       </div>
     </div>
   );
-}
-
-function BlockView({ block }: { block: Block }) {
-  switch (block.type) {
-    case "text":
-      return (
-        <div className="text-sm leading-relaxed text-foreground">
-          {block.content.split("\n\n").map((para, i) => (
-            <p key={i} className="mb-3 last:mb-0 whitespace-pre-wrap">{para}</p>
-          ))}
-        </div>
-      );
-    case "code":
-      return (
-        <div className="rounded-xl overflow-hidden border border-border shadow-sm">
-          {block.language && (
-            <div className="flex items-center gap-2 bg-muted/60 px-4 py-2 border-b border-border">
-              <div className="flex gap-1.5">
-                <span className="w-3 h-3 rounded-full bg-red-400/60" />
-                <span className="w-3 h-3 rounded-full bg-yellow-400/60" />
-                <span className="w-3 h-3 rounded-full bg-green-400/60" />
-              </div>
-              <span className="text-xs font-mono text-muted-foreground ml-1">{block.language}</span>
-            </div>
-          )}
-          <pre className="bg-[#0d1117] text-[#e6edf3] p-5 overflow-x-auto text-[13px] font-mono leading-relaxed">
-            <code>{block.content}</code>
-          </pre>
-        </div>
-      );
-    case "image": {
-      if (!block.content) return null;
-      const src = block.content.startsWith("/static/") ? `${apiOrigin}${block.content}` : block.content;
-      return (
-        <figure className="flex flex-col items-center gap-2 my-2">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={src} alt={block.caption || ""} className="max-w-full rounded-xl border border-border shadow-sm" />
-          {block.caption && <figcaption className="text-xs text-muted-foreground text-center">{block.caption}</figcaption>}
-        </figure>
-      );
-    }
-    case "note":
-      return (
-        <div className="border-l-4 border-primary/50 bg-primary/5 rounded-r-xl px-4 py-3">
-          <p className="text-sm text-muted-foreground italic leading-relaxed whitespace-pre-wrap">{block.content}</p>
-        </div>
-      );
-    default:
-      return <p className="text-sm text-foreground whitespace-pre-wrap">{block.content}</p>;
-  }
 }

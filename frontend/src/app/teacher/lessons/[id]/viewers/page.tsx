@@ -27,9 +27,9 @@ export default function LessonViewersPage() {
     enabled: !!lessonId,
   });
 
-  const { data: viewers = [], isLoading } = useQuery<Viewer[]>({
+  const { data: viewers = [], isLoading, isError, refetch } = useQuery<Viewer[]>({
     queryKey: ["lesson-viewers", lessonId, search],
-    queryFn: async () => (await api.get(`/lessons/${lessonId}/viewers?search=${encodeURIComponent(search)}`)).data,
+    queryFn: async () => (await api.get(`/lessons/${lessonId}/viewers?search=${encodeURIComponent(search)}`)).data ?? [],
     enabled: !!lessonId,
   });
 
@@ -75,7 +75,7 @@ export default function LessonViewersPage() {
       </div>
 
       {/* Viewers list */}
-      {isLoading ? (
+      {isError ? (<div role="alert"><p>Не удалось загрузить просмотры.</p><button className="min-h-11 underline" onClick={() => void refetch()}>Повторить</button></div>) : isLoading ? (
         <div className="flex flex-col gap-2">
           {[1,2,3].map(i => <div key={i} className="h-14 bg-muted/30 rounded-xl animate-pulse" />)}
         </div>
@@ -86,7 +86,7 @@ export default function LessonViewersPage() {
       ) : (
         <div className="flex flex-col gap-2">
           {viewers.map((v, i) => (
-            <div key={v.user_id} className="flex items-center gap-3 border border-border rounded-xl p-3 bg-card">
+            <div key={v.user_id} className="flex flex-wrap items-center gap-3 border border-border rounded-xl p-3 bg-card">
               <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-bold text-primary shrink-0">
                 {i + 1}
               </div>

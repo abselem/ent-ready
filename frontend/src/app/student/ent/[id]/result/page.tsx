@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { AsyncState } from "@/components/ui/async-state";
+import { MathText } from "@/components/math-text";
 
 interface ENTOptionResult { id: number; text: string; order_num: number; is_correct: boolean }
 interface ENTQuestionResult {
@@ -22,8 +24,6 @@ interface ENTResultData {
   total_score: number;
   total_max: number;
 }
-
-const DIFF_COLOR = ["bg-green-100 text-green-700", "bg-yellow-100 text-yellow-700", "bg-red-100 text-red-700"];
 
 function ScoreBar({ score, max }: { score: number; max: number }) {
   const p = max ? Math.round((score / max) * 100) : 0;
@@ -42,12 +42,14 @@ export default function ENTResultPage({ params }: { params: Promise<{ id: string
   const { id } = use(params);
   const router = useRouter();
 
-  const { data, isLoading } = useQuery<ENTResultData>({
+  const { data, isPending, isError, refetch } = useQuery<ENTResultData>({
     queryKey: ["ent-result", id],
+    retry: false,
     queryFn: async () => (await api.get(`/ent/attempts/${id}/result`)).data,
   });
 
-  if (isLoading || !data) return <div className="p-6 text-muted-foreground">Загрузка...</div>;
+  if (isPending) return <div className="page-shell"><AsyncState kind="loading" title="Загружаем результат ЕНТ" /></div>;
+  if (isError || !data) return <div className="page-shell"><AsyncState kind="error" title="Не удалось открыть результат" description="Проверьте соединение и убедитесь, что попытка завершена." onRetry={() => void refetch()} /><Button className="mt-4" variant="outline" onClick={() => router.push("/student/ent")}>К подготовке ЕНТ</Button></div>;
 
   const { sections, total_score, total_max } = data;
   const totalPct = total_max ? Math.round((total_score / total_max) * 100) : 0;
@@ -112,9 +114,9 @@ export default function ENTResultPage({ params }: { params: Promise<{ id: string
                     }`}>
                       {q.is_correct ? "✓" : "✗"}
                     </span>
-                    <div className="flex-1">
+                    <div className="min-w-0 flex-1">
                       <CardTitle className="text-sm font-medium leading-snug">
-                        {qi + 1}. {q.text}
+                        {qi + 1}. <MathText text={q.text} />
                       </CardTitle>
                       {q.is_multi && (
                         <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 mt-1 inline-block">
@@ -138,7 +140,7 @@ export default function ENTResultPage({ params }: { params: Promise<{ id: string
                           <span className="shrink-0 text-xs">
                             {isSelected && isCorrect ? "✓" : isSelected && !isCorrect ? "✗" : isCorrect ? "◎" : "○"}
                           </span>
-                          <span>{opt.text}</span>
+                          <span className="min-w-0 break-words"><MathText text={opt.text} /></span>
                         </div>
                       );
                     })}

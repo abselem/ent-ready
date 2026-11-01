@@ -1,7 +1,8 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useId } from "react";
 import { cn } from "@/lib/utils";
+import { phoneDigits } from "@/lib/phone";
 
 interface PhoneInputProps {
   value: string;
@@ -25,11 +26,11 @@ function formatDigits(digits: string): string {
 
 export function PhoneInput({ value, onChange, className, label, id }: PhoneInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const generatedId = useId();
+  const inputId = id ?? generatedId;
 
   // Extract digits after "+7 " prefix
-  const rawDigits = value.startsWith(PREFIX)
-    ? value.slice(PREFIX.length).replace(/\D/g, "")
-    : value.replace(/\D/g, "").replace(/^7/, "");
+  const rawDigits = phoneDigits(value);
 
   const displayValue = PREFIX + formatDigits(rawDigits);
 
@@ -51,8 +52,7 @@ export function PhoneInput({ value, onChange, className, label, id }: PhoneInput
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const raw = e.target.value;
     // Strip prefix and reformat
-    const afterPrefix = raw.startsWith(PREFIX) ? raw.slice(PREFIX.length) : raw;
-    const digits = afterPrefix.replace(/\D/g, "").slice(0, 10);
+    const digits = phoneDigits(raw);
     const formatted = PREFIX + formatDigits(digits);
     onChange(formatted);
   }
@@ -77,21 +77,23 @@ export function PhoneInput({ value, onChange, className, label, id }: PhoneInput
   return (
     <div className="flex flex-col gap-1.5">
       {label && (
-        <label htmlFor={id} className="text-sm font-medium text-foreground">
+        <label htmlFor={inputId} className="text-sm font-medium text-foreground">
           {label}
         </label>
       )}
       <input
         ref={inputRef}
-        id={id}
+        id={inputId}
         type="tel"
+        inputMode="tel"
+        autoComplete="tel"
         value={displayValue}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
         onFocus={handleFocus}
         onClick={handleClick}
         className={cn(
-          "h-11 w-full rounded-xl border-2 border-white/20 bg-card px-4 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary transition-colors duration-150",
+          "h-11 w-full rounded-xl border border-control-border bg-card px-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary transition-colors duration-150",
           className
         )}
       />

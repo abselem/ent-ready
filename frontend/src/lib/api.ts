@@ -7,12 +7,12 @@ let refreshRequest: { session: number; promise: Promise<{ access_token: string; 
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080/api/v1";
 
-export const api = axios.create({ baseURL: API_URL });
+export const api = axios.create({ baseURL: API_URL, timeout: 60_000 });
 
-// Базовый URL бэкенда без /api/v1 — нужен для отображения загруженных файлов
+// API session handling.
 export const apiOrigin = API_URL.replace(/\/api\/v1\/?$/, "");
 
-// Подставляем access-токен в каждый запрос
+// API session handling.
 api.interceptors.request.use((config) => {
   const request = config as SessionRequest;
   const state = useAuthStore.getState();
@@ -25,7 +25,7 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// При 401 — пробуем обновить токен
+// API session handling.
 api.interceptors.response.use(
   (r) => {
     if ((r.config as SessionRequest)._session !== useAuthStore.getState().sessionVersion) {
@@ -40,6 +40,14 @@ api.interceptors.response.use(
     if (session === undefined || session !== useAuthStore.getState().sessionVersion) {
       return Promise.reject(new axios.CanceledError("Session changed"));
     }
+    // Invalid login/OTP credentials belong to the form, not session recovery.
+    const path = original.url?.split("?")[0] ?? "";
+    if (path === "/users/me/password" && error.response?.data?.error === "current password required; use email reset if no password is set") {
+      return Promise.reject(error);
+    }
+    if (/^\/?auth\/(login(?:\/otp)?|register|send-otp|reset-password)\/?$/.test(path)) {
+      return Promise.reject(error);
+    }
     if (error.response?.status === 401 && !original._retry) {
       original._retry = true;
       const refresh = useAuthStore.getState().refreshToken;
@@ -52,7 +60,8 @@ api.interceptors.response.use(
         if (!refreshRequest || refreshRequest.session !== session) {
           const promise = axios.post(
             `${API_URL}/auth/refresh`,
-            { refresh_token: refresh }
+            { refresh_token: refresh },
+            { timeout: 15_000 }
           ).then(({ data }) => data);
           refreshRequest = { session, promise };
           void promise.finally(() => {

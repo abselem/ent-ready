@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
@@ -30,15 +30,13 @@ export default function LoginPage() {
 
   const identifierIsEmail = isEmail(identifier.trim());
 
-  function startResendCooldown() {
-    setResendCooldown(60);
-    const iv = setInterval(() => {
-      setResendCooldown(n => {
-        if (n <= 1) { clearInterval(iv); return 0; }
-        return n - 1;
-      });
-    }, 1000);
-  }
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setTimeout(() => setResendCooldown(value => Math.max(0, value - 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [resendCooldown]);
+
+  function startResendCooldown() { setResendCooldown(60); }
 
   async function handleSendOTP() {
     setError("");
@@ -101,7 +99,7 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <Input
-            id="identifier" label="Email или номер телефона"
+            id="identifier" required disabled={loading} label="Email или номер телефона"
             type="text" placeholder="+7 777 123 45 67 или email@mail.com"
             value={identifier}
             onChange={e => {
@@ -126,7 +124,7 @@ export default function LoginPage() {
             <>
               {!otpSent ? (
                 <Button type="button" variant="outline" loading={loading}
-                  onClick={handleSendOTP} disabled={!identifier.trim()}>
+                  onClick={handleSendOTP} disabled={!identifier.trim() || resendCooldown > 0}>
                   Отправить код на email
                 </Button>
               ) : (
@@ -163,7 +161,7 @@ export default function LoginPage() {
 
           <Button
             type="submit" size="lg" loading={loading} className="w-full"
-            disabled={mode === "otp" && identifierIsEmail && !otpSent}
+            disabled={mode === "otp" && identifierIsEmail && (!otpSent || code.length !== 4)}
           >
             Войти
           </Button>

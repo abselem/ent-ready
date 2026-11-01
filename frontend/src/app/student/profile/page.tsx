@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, apiOrigin, signOut } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
@@ -30,7 +30,6 @@ interface ActivityData {
 
 const CELL = 12; // px
 const GAP  = 2;  // px
-const COL  = CELL + GAP; // 14px per week column
 
 function cellColor(count: number) {
   if (count === 0)  return "#2d3748"; // visible empty cell
@@ -43,12 +42,12 @@ const MONTH_NAMES = ["янв","февр","март","апр","май","июнь"
 
 function ActivityHeatmap({ data }: { data: ActivityData }) {
   const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  today.setUTCHours(0, 0, 0, 0);
   const todayStr = today.toISOString().slice(0, 10);
 
   // Align start to the Sunday 52 full weeks back
   const start = new Date(today);
-  start.setDate(start.getDate() - 52 * 7 - today.getDay());
+  start.setUTCDate(start.getUTCDate() - 52 * 7 - today.getUTCDay());
 
   const dayMap = new Map(data.days.map(d => [d.date, d.count]));
 
@@ -61,7 +60,7 @@ function ActivityHeatmap({ data }: { data: ActivityData }) {
       const ds = cur.toISOString().slice(0, 10);
       week.push({ date: ds, count: dayMap.get(ds) ?? 0,
         today: ds === todayStr, future: cur > today });
-      cur.setDate(cur.getDate() + 1);
+      cur.setUTCDate(cur.getUTCDate() + 1);
     }
     weeks.push(week);
   }
@@ -70,7 +69,7 @@ function ActivityHeatmap({ data }: { data: ActivityData }) {
   const monthRow = weeks.map((week, wi) => {
     const d = new Date(week[0].date);
     const prev = wi > 0 ? new Date(weeks[wi - 1][0].date) : null;
-    return (!prev || d.getMonth() !== prev.getMonth()) ? MONTH_NAMES[d.getMonth()] : "";
+    return (!prev || d.getUTCMonth() !== prev.getUTCMonth()) ? MONTH_NAMES[d.getUTCMonth()] : "";
   });
 
   return (
@@ -117,7 +116,7 @@ function ActivityHeatmap({ data }: { data: ActivityData }) {
         {[
           { label: "дней без перерыва",       value: data.current_streak },
           { label: "дней без перерыва (макс.)", value: data.max_streak },
-          { label: "задач решено",             value: data.total_solved },
+          { label: "тестов пройдено",             value: data.total_solved },
         ].map(s => (
           <div key={s.label}>
             <p className="text-2xl font-bold">{s.value}</p>
@@ -139,15 +138,15 @@ export default function StudentProfilePage() {
 
   const [firstName, setFirstName] = useState(user?.first_name ?? "");
   const [lastName, setLastName] = useState(user?.last_name ?? "");
-  const [phone, setPhone] = useState("");
+  const [phoneDraft, setPhone] = useState<string>();
   const [phoneSaved, setPhoneSaved] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [avatarUploading, setAvatarUploading] = useState(false);
-  const [sub1, setSub1] = useState<number | "">(user?.profile_subject1 ?? "");
-  const [sub2, setSub2] = useState<number | "">(user?.profile_subject2 ?? "");
+  const [sub1Draft, setSub1] = useState<number | "">();
+  const [sub2Draft, setSub2] = useState<number | "">();
   const [inviteCode, setInviteCode] = useState("");
   const [joinError, setJoinError] = useState("");
 
@@ -156,7 +155,7 @@ export default function StudentProfilePage() {
     queryFn: async () => (await api.get("/topics")).data,
   });
 
-  const { data: myGroups = [], isLoading: groupsLoading } = useQuery<Group[]>({
+  const { data: myGroups = [], isLoading: groupsLoading, isError: groupsError } = useQuery<Group[]>({
     queryKey: ["joined-groups"],
     queryFn: async () => (await api.get("/groups/joined")).data,
   });
@@ -171,13 +170,10 @@ export default function StudentProfilePage() {
     queryFn: async () => (await api.get("/users/me/activity")).data,
   });
 
-  useEffect(() => {
-    if (meFull) {
-      setSub1(meFull.profile_subject1 ?? "");
-      setSub2(meFull.profile_subject2 ?? "");
-      setPhone(meFull.phone ?? "");
-    }
-  }, [meFull]);
+  // Server refetches update untouched fields without overwriting an unsaved draft.
+  const sub1 = sub1Draft ?? meFull?.profile_subject1 ?? user?.profile_subject1 ?? "";
+  const sub2 = sub2Draft ?? meFull?.profile_subject2 ?? user?.profile_subject2 ?? "";
+  const phone = phoneDraft ?? meFull?.phone ?? "";
 
   const phoneValue = meFull?.phone ?? "";
   const emailValue = meFull?.email ?? "";
@@ -210,7 +206,7 @@ export default function StudentProfilePage() {
       const { data: fresh } = await api.get("/users/me");
       setUser(fresh);
       qc.invalidateQueries({ queryKey: ["me-full"] });
-    } catch { /* ignore */ } finally {
+    } catch { setError("Не удалось загрузить фотографию. Проверьте формат и размер файла."); } finally {
       setAvatarUploading(false);
       e.target.value = "";
     }
@@ -247,9 +243,10 @@ export default function StudentProfilePage() {
   const leaveGroup = useMutation({
     mutationFn: (groupId: number) => api.delete(`/groups/${groupId}/leave`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["joined-groups"] }),
+    onError: () => setJoinError("Не удалось выйти из группы. Повторите попытку."),
   });
 
-  const canJoin = myGroups.length < 2;
+  const canJoin = !groupsLoading && !groupsError && myGroups.length < 2;
 
   return (
     <div className="p-4 md:p-6 max-w-lg mx-auto">
@@ -300,8 +297,8 @@ export default function StudentProfilePage() {
             <Input id="lastName" label="Фамилия" value={lastName} onChange={(e) => setLastName(e.target.value)} />
 
             <div className="flex flex-col gap-1">
-              <label className="text-sm font-medium">Профильный предмет 1 <span className="text-muted-foreground font-normal">(ЕНТ)</span></label>
-              <select value={sub1} onChange={(e) => setSub1(e.target.value ? Number(e.target.value) : "")}
+              <label htmlFor="profile-subject-1" className="text-sm font-medium">Профильный предмет 1 <span className="text-muted-foreground font-normal">(ЕНТ)</span></label>
+              <select id="profile-subject-1" value={sub1} onChange={(e) => setSub1(e.target.value ? Number(e.target.value) : "")}
                 className="border border-border rounded-md px-3 py-2 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-primary">
                 <option value="">Не выбран</option>
                 <optgroup label="ЕНТ">
@@ -310,8 +307,8 @@ export default function StudentProfilePage() {
               </select>
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-sm font-medium">Профильный предмет 2 <span className="text-muted-foreground font-normal">(ЕНТ)</span></label>
-              <select value={sub2} onChange={(e) => setSub2(e.target.value ? Number(e.target.value) : "")}
+              <label htmlFor="profile-subject-2" className="text-sm font-medium">Профильный предмет 2 <span className="text-muted-foreground font-normal">(ЕНТ)</span></label>
+              <select id="profile-subject-2" value={sub2} onChange={(e) => setSub2(e.target.value ? Number(e.target.value) : "")}
                 className="border border-border rounded-md px-3 py-2 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-primary">
                 <option value="">Не выбран</option>
                 <optgroup label="ЕНТ">
@@ -326,9 +323,9 @@ export default function StudentProfilePage() {
                 <p className="text-xs font-medium text-yellow-400 mb-2">📱 Укажите номер телефона</p>
                 <div className="flex gap-2">
                   <input
-                    type="tel" placeholder="+7 777 000 00 00"
+                    type="tel" aria-label="Телефон" placeholder="+7 777 000 00 00"
                     value={phone} onChange={e => setPhone(e.target.value)}
-                    className="flex-1 border border-border rounded-lg px-3 py-1.5 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="min-w-0 flex-1 border border-border rounded-lg px-3 py-1.5 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                   <button
                     onClick={() => updatePhone.mutate()}
@@ -354,7 +351,7 @@ export default function StudentProfilePage() {
               </div>
             )}
 
-            {error && <p className="text-sm text-destructive">{error}</p>}
+            {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
             {saved && <p className="text-sm text-green-600">Сохранено!</p>}
             <Button loading={updateProfile.isPending} onClick={() => updateProfile.mutate()}>Сохранить</Button>
           </div>
@@ -381,7 +378,7 @@ export default function StudentProfilePage() {
         </CardHeader>
         <CardContent>
           <div className="flex flex-col gap-3">
-            {groupsLoading ? <p className="text-sm text-muted-foreground">Загрузка...</p>
+            {groupsError ? <p role="alert" className="text-sm text-destructive">Не удалось загрузить группы. Обновите страницу.</p> : groupsLoading ? <p className="text-sm text-muted-foreground">Загрузка...</p>
               : myGroups.length === 0 ? <p className="text-sm text-muted-foreground">Вы ещё не вступили ни в одну группу</p>
               : myGroups.map((g) => (
                 <div key={g.id} className="flex items-center justify-between gap-2 border border-border rounded-lg p-3">
@@ -394,20 +391,21 @@ export default function StudentProfilePage() {
                 </div>
               ))
             }
+            {joinError && !canJoin && <p role="alert" className="text-sm text-destructive">{joinError}</p>}
             {canJoin && (
               <div className="flex flex-col gap-2 pt-1">
                 <p className="text-xs text-muted-foreground">Введите код группы (школа или курсы)</p>
                 <div className="flex gap-2">
-                  <input className="flex-1 border border-border rounded-md px-3 py-2 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-primary font-mono uppercase tracking-widest"
-                    placeholder="ABC123" maxLength={8} value={inviteCode}
+                  <input className="min-w-0 flex-1 border border-border rounded-md px-3 py-2 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-primary font-mono uppercase tracking-widest"
+                    aria-label="Код приглашения в группу" placeholder="ABC123" maxLength={8} value={inviteCode}
                     onChange={(e) => { setInviteCode(e.target.value); setJoinError(""); }}
-                    onKeyDown={(e) => { if (e.key === "Enter" && inviteCode.trim()) joinGroup.mutate(); }} />
+                    onKeyDown={(e) => { if (e.key === "Enter" && inviteCode.trim() && !joinGroup.isPending) joinGroup.mutate(); }} />
                   <Button size="sm" disabled={!inviteCode.trim()} loading={joinGroup.isPending} onClick={() => joinGroup.mutate()}>Вступить</Button>
                 </div>
-                {joinError && <p className="text-sm text-destructive">{joinError}</p>}
+                {joinError && <p role="alert" className="text-sm text-destructive">{joinError}</p>}
               </div>
             )}
-            {!canJoin && <p className="text-xs text-muted-foreground text-center pt-1">Максимум 2 группы. Выйдите из одной, чтобы вступить в другую.</p>}
+            {!groupsLoading && !groupsError && !canJoin && <p className="text-xs text-muted-foreground text-center pt-1">Максимум 2 группы. Выйдите из одной, чтобы вступить в другую.</p>}
           </div>
         </CardContent>
       </Card>

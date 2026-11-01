@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
@@ -46,15 +46,13 @@ export default function RegisterPage() {
     }
   }
 
-  function startResendCooldown() {
-    setResendCooldown(60);
-    const iv = setInterval(() => {
-      setResendCooldown(n => {
-        if (n <= 1) { clearInterval(iv); return 0; }
-        return n - 1;
-      });
-    }, 1000);
-  }
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setTimeout(() => setResendCooldown(value => Math.max(0, value - 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [resendCooldown]);
+
+  function startResendCooldown() { setResendCooldown(60); }
 
   function handleVerifyCode() {
     if (code.length < 4) { setError("Введите 4-значный код"); return; }
@@ -90,7 +88,7 @@ export default function RegisterPage() {
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? "";
       if (msg.includes("уже зарегистрирован") || msg.includes("already")) setError("Этот email уже зарегистрирован.");
-      else if (msg.includes("Неверный код") || msg.includes("invalid code")) setError("Неверный код. Попробуйте снова.");
+      else if (msg.includes("Неверный код") || msg.includes("invalid code")) { setError("Неверный код. Попробуйте снова."); setCode(""); setStep("code"); }
       else if (msg.includes("истёк") || msg.includes("expired")) { setError("Код истёк. Запросите новый."); setStep("email"); }
       else setError("Ошибка регистрации. Попробуйте ещё раз.");
     } finally {
@@ -123,7 +121,7 @@ export default function RegisterPage() {
         {step === "email" && (
           <div className="flex flex-col gap-4">
             <Input
-              id="email" label="Email" type="email"
+              id="email" disabled={loading} label="Email" type="email"
               placeholder="example@mail.com"
               value={email} onChange={e => { setEmail(e.target.value); setError(""); }}
               autoComplete="email"

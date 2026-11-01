@@ -1,12 +1,14 @@
 "use client";
 
-import { use, useState, useCallback } from "react";
+import { use, useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { MathText } from "@/components/math-text";
+import { AsyncState } from "@/components/ui/async-state";
+import { ENTAnswerQueue } from "../answer-queue";
 
 interface ENTOption { id: number; text: string; order_num: number }
 interface ENTQuestion {
@@ -30,59 +32,90 @@ interface ENTData {
 export default function ENTQuizPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const qc = useQueryClient();
-  const [activeSlot, setActiveSlot] = useState(1);
-
-  const { data, isLoading } = useQuery<ENTData>({
+  const query = useQuery<ENTData>({
     queryKey: ["ent-attempt", id],
-    queryFn: async () => {
-      const res = await api.get(`/ent/attempts/${id}`);
-      return res.data;
-    },
+    queryFn: async () => (await api.get(`/ent/attempts/${id}`)).data,
+    retry: false,
   });
+  useEffect(() => {
+    if (query.data?.attempt.finished_at) router.replace(`/student/ent/${id}/result`);
+  }, [query.data?.attempt.finished_at, id, router]);
+  if (query.isPending) return <div className="page-shell"><AsyncState kind="loading" title="Загружаем тест ЕНТ" /></div>;
+  if (query.isError || !query.data) return <div className="page-shell"><AsyncState kind="error" title="Не удалось открыть тест ЕНТ" description="Проверьте соединение и доступ к попытке." onRetry={() => void query.refetch()} /></div>;
+  if (query.data.attempt.finished_at) return <div className="page-shell"><AsyncState kind="loading" title="Открываем результат" /></div>;
+  return <ENTQuizSession key={id} id={id} data={query.data} />;
+}
 
-  // Local answers state, synced from server on load
-  const [localAnswers, setLocalAnswers] = useState<Record<number, number[]>>({});
-  const [initialized, setInitialized] = useState(false);
+function ENTQuizSession({ id, data }: { id: string; data: ENTData }) {
+  const router = useRouter();
+  const qc = useQueryClient();
+  const [activeSlot, setActiveSlot] = useState(data.sections[0]?.slot ?? 1);
+  const [localAnswers, setLocalAnswers] = useState<Record<number, number[]>>(data.answers ?? {});
+  const answers = useRef(localAnswers);
+  const [statuses, setStatuses] = useState<Record<number, "saving" | "saved" | "error">>({});
+  const queue = useRef<ENTAnswerQueue | null>(null);
+  const finishing = useRef(false);
+  const [finishError, setFinishError] = useState("");
+  const [submitted, setSubmitted] = useState(false);
 
-  if (data && !initialized) {
-    setLocalAnswers(data.answers ?? {});
-    setInitialized(true);
-  }
+  useEffect(() => {
+    const writes = new ENTAnswerQueue(
+      (questionId, optionIds) => api.post(`/ent/attempts/${id}/answer`, { question_id: questionId, option_ids: optionIds }, { timeout: 10000 }),
+      (questionId, status) => setStatuses(previous => ({ ...previous, [questionId]: status })),
+    );
+    queue.current = writes;
+    return () => { writes.dispose(); };
+  }, [id]);
 
-  const saveAnswer = useMutation({
-    mutationFn: ({ questionId, optionIds }: { questionId: number; optionIds: number[] }) =>
-      api.post(`/ent/attempts/${id}/answer`, { question_id: questionId, option_ids: optionIds }),
-  });
+  const hasPending = Object.values(statuses).includes("saving");
+  const hasErrors = Object.values(statuses).includes("error");
+  useEffect(() => {
+    if (!hasPending && !hasErrors) return;
+    document.body.dataset.unsavedEnt = "true";
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => {
+      delete document.body.dataset.unsavedEnt;
+      window.removeEventListener("beforeunload", warn);
+    };
+  }, [hasPending, hasErrors]);
 
   const finish = useMutation({
-    mutationFn: () => api.post(`/ent/attempts/${id}/finish`),
+    mutationFn: async () => {
+      if (!queue.current || !(await queue.current.flush())) throw new Error("unsaved answers");
+      // If the response is lost, the server may already have closed the attempt.
+      // Keep choices frozen and let the user retry the idempotent finish request.
+      setSubmitted(true);
+      return api.post(`/ent/attempts/${id}/finish`, undefined, { timeout: 15000 });
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["ent-attempts"] });
       router.push(`/student/ent/${id}/result`);
     },
+    onError: () => {
+      finishing.current = false;
+      setFinishError("Не удалось завершить тест. Проверьте сохранение ответов и повторите попытку.");
+    },
   });
 
-  const handleSingleSelect = useCallback((qid: number, optId: number) => {
-    const newSel = [optId];
-    setLocalAnswers((prev) => ({ ...prev, [qid]: newSel }));
-    saveAnswer.mutate({ questionId: qid, optionIds: newSel });
-  }, [saveAnswer]);
-
-  const handleMultiToggle = useCallback((qid: number, optId: number) => {
-    setLocalAnswers((prev) => {
-      const cur = prev[qid] ?? [];
-      const next = cur.includes(optId) ? cur.filter((x) => x !== optId) : [...cur, optId];
-      saveAnswer.mutate({ questionId: qid, optionIds: next });
-      return { ...prev, [qid]: next };
-    });
-  }, [saveAnswer]);
-
-  if (isLoading || !data) return <div className="p-6 text-muted-foreground">Загрузка...</div>;
-
-  if (data.attempt.finished_at) {
-    router.push(`/student/ent/${id}/result`);
-    return null;
+  function choose(qid: number, optionIds: number[]) {
+    if (finishing.current || submitted) return;
+    const next = { ...answers.current, [qid]: optionIds };
+    answers.current = next;
+    setLocalAnswers(next);
+    setFinishError("");
+    queue.current?.choose(qid, optionIds);
+  }
+  function handleSingleSelect(qid: number, optId: number) { choose(qid, [optId]); }
+  function handleMultiToggle(qid: number, optId: number) {
+    const current = answers.current[qid] ?? [];
+    choose(qid, current.includes(optId) ? current.filter(value => value !== optId) : [...current, optId]);
+  }
+  function finishTest() {
+    if (finishing.current) return;
+    finishing.current = true;
+    setFinishError("");
+    finish.mutate();
   }
 
   const sections = data.sections ?? [];
@@ -120,16 +153,20 @@ export default function ENTQuizPage({ params }: { params: Promise<{ id: string }
             );
           })}
         </div>
-        <div className="px-4 py-1.5 flex items-center justify-between text-xs text-muted-foreground border-t border-border">
+        <div className="px-4 py-1.5 flex flex-wrap gap-3 items-center justify-between text-xs text-muted-foreground border-t border-border">
           <span>Отвечено: <b className="text-foreground">{totalAnswered}/{totalQuestions}</b></span>
           <Button size="sm" variant="outline" className="h-7 text-xs"
             loading={finish.isPending}
-            onClick={() => finish.mutate()}>
+            disabled={hasPending || hasErrors || totalQuestions === 0} onClick={finishTest}>
             Завершить тест
           </Button>
         </div>
       </div>
 
+      {(hasPending || hasErrors || finishError) && <div className="border-b border-border px-4 py-3 text-sm" role={hasErrors || finishError ? "alert" : "status"}>
+        {finishError || (hasErrors ? "Есть несохранённые ответы. Повторите отправку у соответствующего вопроса." : "Сохраняем ответы… Дождитесь подтверждения перед завершением.")}
+      </div>}
+      {totalQuestions === 0 && <div className="page-shell"><AsyncState kind="empty" title="В этой попытке нет вопросов" description="Вернитесь к подготовке и создайте новую попытку." /></div>}
       {/* Questions */}
       <div className="flex-1 overflow-y-auto p-4 md:p-6">
         {activeSection && (
@@ -147,7 +184,7 @@ export default function ENTQuizPage({ params }: { params: Promise<{ id: string }
                     <div className="flex items-start gap-2 mb-3">
                       <span className="text-xs font-semibold text-muted-foreground shrink-0 mt-0.5">{qi + 1}.</span>
                       <div className="flex-1">
-                        <p className="text-sm font-medium leading-snug"><MathText text={q.text} /></p>
+                        <p id={`ent-question-${q.id}`} className="test-question text-sm font-medium leading-snug"><MathText text={q.text} /></p>
                         {q.is_multi && (
                           <span className="inline-block mt-1 text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
                             Несколько ответов
@@ -156,41 +193,18 @@ export default function ENTQuizPage({ params }: { params: Promise<{ id: string }
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-2 ml-4">
-                      {q.options.map((opt) => {
-                        const isSelected = selected.includes(opt.id);
-                        if (q.is_multi) {
-                          return (
-                            <label key={opt.id} className="flex items-start gap-2.5 cursor-pointer group">
-                              <div
-                                onClick={() => handleMultiToggle(q.id, opt.id)}
-                                className={`w-5 h-5 mt-0.5 shrink-0 rounded border-2 flex items-center justify-center transition-colors cursor-pointer ${
-                                  isSelected ? "bg-primary border-primary" : "border-border group-hover:border-primary/50"
-                                }`}
-                              >
-                                {isSelected && (
-                                  <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none">
-                                    <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                  </svg>
-                                )}
-                              </div>
-                              <span onClick={() => handleMultiToggle(q.id, opt.id)}
-                                className="text-sm leading-snug">{opt.text}</span>
-                            </label>
-                          );
-                        }
-                        return (
-                          <label key={opt.id} className="flex items-start gap-2.5 cursor-pointer group"
-                            onClick={() => handleSingleSelect(q.id, opt.id)}>
-                            <div className={`w-5 h-5 mt-0.5 shrink-0 rounded-full border-2 flex items-center justify-center transition-colors ${
-                              isSelected ? "border-primary" : "border-border group-hover:border-primary/50"
-                            }`}>
-                              {isSelected && <div className="w-2.5 h-2.5 rounded-full bg-primary" />}
-                            </div>
-                            <span className="text-sm leading-snug"><MathText text={opt.text} /></span>
-                          </label>
-                        );
-                      })}
+                    <fieldset disabled={finish.isPending || submitted} aria-labelledby={`ent-question-${q.id}`} className="flex min-w-0 flex-col gap-2 ml-4">
+                      <legend className="sr-only">{q.is_multi ? "Выберите несколько ответов" : "Выберите один ответ"}</legend>
+                      {q.options.map(opt => <label key={opt.id} className="flex min-h-11 min-w-0 cursor-pointer items-start gap-3 rounded-lg border border-control-border p-3">
+                        <input type={q.is_multi ? "checkbox" : "radio"} name={`ent-question-${q.id}`} checked={selected.includes(opt.id)}
+                          onChange={() => q.is_multi ? handleMultiToggle(q.id, opt.id) : handleSingleSelect(q.id, opt.id)} className="mt-1 size-4 shrink-0 accent-primary" />
+                        <span className="min-w-0 break-words text-sm leading-relaxed"><MathText text={opt.text} /></span>
+                      </label>)}
+                    </fieldset>
+                    <div className="mt-3 text-sm" aria-live="polite">
+                      {statuses[q.id] === "saving" ? <span className="text-muted-foreground">Сохраняем ответ…</span>
+                        : statuses[q.id] === "error" ? <div className="flex flex-wrap items-center gap-2 text-destructive"><span>Ответ не сохранён</span><Button size="sm" variant="outline" disabled={finish.isPending || submitted} onClick={() => queue.current?.choose(q.id, answers.current[q.id] ?? [])}>Повторить отправку</Button></div>
+                        : statuses[q.id] === "saved" || selected.length > 0 ? <span className="text-success">Ответ сохранён</span> : null}
                     </div>
                   </CardContent>
                 </Card>
@@ -205,7 +219,7 @@ export default function ENTQuizPage({ params }: { params: Promise<{ id: string }
               </Button>
             )}
             {activeSlot === sections.length && (
-              <Button className="mt-2" loading={finish.isPending} onClick={() => finish.mutate()}>
+              <Button className="mt-2" loading={finish.isPending} disabled={hasPending || hasErrors || totalQuestions === 0} onClick={finishTest}>
                 Завершить тест ЕНТ
               </Button>
             )}

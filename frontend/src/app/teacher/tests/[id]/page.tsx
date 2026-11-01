@@ -46,7 +46,7 @@ export default function TestEditorPage({ params }: { params: Promise<{ id: strin
   const [newSubtopicName, setNewSubtopicName] = useState("");
   const [bankFilter, setBankFilter] = useState<number | "">("");
 
-  const { data: test, isLoading } = useQuery<TestFull>({
+  const { data: test, isLoading, isError, refetch } = useQuery<TestFull>({
     queryKey: ["test-full", id],
     queryFn: async () => {
       const { data } = await api.get(`/tests/${id}`);
@@ -56,18 +56,18 @@ export default function TestEditorPage({ params }: { params: Promise<{ id: strin
 
   const { data: topics = [] } = useQuery<Topic[]>({
     queryKey: ["topics"],
-    queryFn: async () => (await api.get("/topics")).data,
+    queryFn: async () => (await api.get("/topics")).data ?? [],
   });
 
   const { data: subtopics = [] } = useQuery<Subtopic[]>({
     queryKey: ["subtopics", newTopicId],
-    queryFn: async () => newTopicId ? (await api.get(`/topics/${newTopicId}/subtopics`)).data : [],
+    queryFn: async () => newTopicId ? (await api.get(`/topics/${newTopicId}/subtopics`)).data ?? [] : [],
     enabled: !!newTopicId,
   });
 
   const { data: bankQuestions = [] } = useQuery<BankQuestion[]>({
     queryKey: ["my-questions"],
-    queryFn: async () => (await api.get("/questions/mine")).data,
+    queryFn: async () => (await api.get("/questions/mine")).data ?? [],
     enabled: tab === "bank",
   });
 
@@ -141,7 +141,7 @@ export default function TestEditorPage({ params }: { params: Promise<{ id: strin
   });
 
   if (isLoading) return <div className="p-6 text-muted-foreground">Загрузка...</div>;
-  if (!test) return null;
+  if (isError || !test) return <div className="page-shell"><p role="alert">Не удалось открыть тест.</p><Button onClick={() => void refetch()}>Повторить</Button></div>;
 
   const alreadyInTest = new Set(test.questions.map((q) => q.id));
   const filteredBank = bankFilter
@@ -178,6 +178,7 @@ export default function TestEditorPage({ params }: { params: Promise<{ id: strin
         {" · "}{test.is_public ? "Публичный" : "Приватный"}
       </p>
 
+      {(publishTest.isError || addQuestion.isError || linkQuestion.isError || unlinkQuestion.isError || addOption.isError || toggleCorrect.isError || deleteOption.isError || createTopic.isError || createSubtopic.isError) && <p role="alert" className="mb-4 text-sm text-destructive">Не удалось сохранить изменения. Повторите действие.</p>}
       {/* Questions list */}
       <div className="flex flex-col gap-4 mb-6">
         {test.questions.map((q, qi) => (

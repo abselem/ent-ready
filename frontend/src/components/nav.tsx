@@ -21,6 +21,12 @@ export function Nav({ items }: NavProps) {
   const teacher = user?.role_id === 1;
 
   function confirmLeave() {
+    if (document.body.dataset.unsavedLesson === "true") {
+      return window.confirm("В уроке есть несохранённые изменения. Выйти без сохранения?");
+    }
+    if (document.body.dataset.unsavedEnt === "true") {
+      return window.confirm("Есть несохранённые ответы ЕНТ. Выйти? После возвращения будут доступны только ответы, которые успели сохраниться.");
+    }
     return document.body.dataset.activeAttempt !== "true" || window.confirm("Выйти из теста? Вернуться к этой обычной попытке после перехода пока нельзя. Уже отправленные ответы останутся на сервере.");
   }
   function guardNavigation(event: React.MouseEvent<HTMLAnchorElement>) {

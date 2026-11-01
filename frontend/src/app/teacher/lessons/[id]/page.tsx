@@ -1,365 +1,188 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRouter, useParams } from "next/navigation";
+import { useRouter, useParams, useSearchParams, usePathname } from "next/navigation";
 import { api, apiOrigin } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 
-interface Lesson {
-  id: number;
-  title: string;
-  is_published: boolean;
-  visibility: string;
-  view_count: number;
-  topic_id: number | null;
-  topic_name: string;
-  subtopic_id: number | null;
-  subtopic_name: string;
-}
-interface Block {
-  id: number;
-  type: string;
-  content: string;
-  language: string;
-  caption: string;
-  order_num: number;
-}
+interface Lesson { id: number; title: string; is_published: boolean; visibility: string; view_count: number; topic_id: number | null; subtopic_id: number | null }
+interface Block { id: number; type: string; content: string; language: string; caption: string; order_num: number }
 interface Topic { id: number; name: string }
-interface Subtopic { id: number; topic_id: number; name: string }
-
+type Content = Pick<Block, "content" | "language" | "caption">;
+type Draft = { data: Content; revision: number; savedRevision: number; status: "dirty" | "saving" | "saved" | "error"; running?: Promise<boolean> };
 const BLOCK_TYPES = [
-  { value: "text",  label: "Текст",         icon: "¶" },
-  { value: "code",  label: "Код",           icon: "</>" },
-  { value: "image", label: "Изображение",   icon: "🖼" },
-  { value: "note",  label: "Заметка",       icon: "ℹ" },
+  { value: "text", label: "Текст", icon: "¶", description: "Теория и объяснения" },
+  { value: "image", label: "Изображение", icon: "▧", description: "Иллюстрация с подписью" },
+  { value: "code", label: "Код", icon: "</>", description: "Пример программы" },
+  { value: "note", label: "Заметка", icon: "i", description: "Важная мысль или подсказка" },
 ];
-
-const TYPE_COLORS: Record<string, string> = {
-  text:  "bg-blue-500/10 text-blue-400",
-  code:  "bg-green-500/10 text-green-400",
-  image: "bg-purple-500/10 text-purple-400",
-  note:  "bg-yellow-500/10 text-yellow-400",
-};
+const blockType = (block: Block) => BLOCK_TYPES.find(type => type.value === block.type)?.label ?? block.type;
 
 export default function TeacherLessonEditor() {
+  return <Suspense fallback={<div className="page-shell" role="status">Открываем редактор…</div>}><LessonEditorRoute /></Suspense>;
+}
+
+function LessonEditorRoute() {
   const { id } = useParams();
-  const lessonId = Number(id);
+  return <LessonEditor key={String(id)} lessonId={Number(id)} />;
+}
+
+function LessonEditor({ lessonId }: { lessonId: number }) {
   const router = useRouter();
   const qc = useQueryClient();
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const requestedStep = Number(searchParams.get("step"));
+  const selectedId = Number.isInteger(requestedStep) && requestedStep > 0 ? requestedStep : null;
+  function setSelectedId(stepId: number | null) {
+    const query = new URLSearchParams(searchParams.toString());
+    if (stepId !== null) query.set("step", String(stepId)); else query.delete("step");
+    router.replace(query.size ? `${pathname}?${query}` : pathname, { scroll: false });
+  }
   const [showTypeMenu, setShowTypeMenu] = useState(false);
+  const [showSteps, setShowSteps] = useState(false);
   const [showAccessPanel, setShowAccessPanel] = useState(false);
   const [showTopicPanel, setShowTopicPanel] = useState(false);
-  const [topicId, setTopicId] = useState<number | "">("");
-  const [subtopicId, setSubtopicId] = useState<number | "">("");
-
-  const { data: lesson, refetch: refetchLesson } = useQuery<Lesson>({
-    queryKey: ["lesson", lessonId],
-    queryFn: async () => (await api.get(`/lessons/${lessonId}`)).data,
-    enabled: !!lessonId,
-  });
+  const [topicDraft, setTopicDraft] = useState<number | "" | null>(null);
+  const [subtopicDraft, setSubtopicDraft] = useState<number | "" | null>(null);
+  const [actionError, setActionError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const drafts = useRef(new Map<number, Draft>());
+  const [draftSnapshot, setDraftSnapshot] = useState(new Map<number, Draft>());
+  const redraw = () => setDraftSnapshot(new Map([...drafts.current].map(([key,draft]) => [key, { ...draft, data: { ...draft.data } }])));
+  const validId = Number.isInteger(lessonId) && lessonId > 0;
+  const lessonQuery = useQuery<Lesson>({ queryKey: ["lesson", lessonId], queryFn: async () => (await api.get(`/lessons/${lessonId}`)).data, enabled: validId });
+  const blocksQuery = useQuery<Block[]>({ queryKey: ["lesson-blocks", lessonId], queryFn: async () => (await api.get(`/lessons/${lessonId}/blocks`)).data ?? [], enabled: validId });
+  const lesson = lessonQuery.data;
+  const blocks = [...(blocksQuery.data ?? [])].sort((a,b) => a.order_num - b.order_num || a.id - b.id);
+  const selected = blocks.find(block => block.id === selectedId) ?? blocks[0];
+  const selectedIndex = selected ? blocks.findIndex(block => block.id === selected.id) : -1;
+  const hasDirty = [...draftSnapshot.values()].some(draft => draft.revision !== draft.savedRevision);
+  const hasSaving = [...draftSnapshot.values()].some(draft => draft.status === "saving");
+  const hasError = [...draftSnapshot.values()].some(draft => draft.status === "error");
+  const topicId = topicDraft ?? lesson?.topic_id ?? "";
+  const subtopicId = subtopicDraft ?? lesson?.subtopic_id ?? "";
+  const { data: topics = [] } = useQuery<Topic[]>({ queryKey: ["topics"], queryFn: async () => (await api.get("/topics")).data ?? [] });
+  const { data: subtopics = [] } = useQuery<Topic[]>({ queryKey: ["subtopics", topicId], queryFn: async () => (await api.get(`/topics/${topicId}/subtopics`)).data ?? [], enabled: !!topicId });
 
   useEffect(() => {
-    if (lesson) {
-      setTopicId(lesson.topic_id || "");
-      setSubtopicId(lesson.subtopic_id || "");
-    }
-  }, [lesson]);
+    if (!hasDirty && !uploading) return;
+    document.body.dataset.unsavedLesson = "true";
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => { delete document.body.dataset.unsavedLesson; window.removeEventListener("beforeunload", warn); };
+  }, [hasDirty, uploading]);
 
-  const { data: topics = [] } = useQuery<Topic[]>({
-    queryKey: ["topics"],
-    queryFn: async () => (await api.get("/topics")).data,
-  });
-
-  const { data: allSubtopics = [] } = useQuery<Subtopic[]>({
-    queryKey: ["subtopics"],
-    queryFn: async () => (await api.get("/subtopics")).data,
-  });
-
-  const subtopicsForTopic = topicId
-    ? allSubtopics.filter(st => st.topic_id === Number(topicId))
-    : [];
-
-  const { data: blocks = [], isLoading } = useQuery<Block[]>({
-    queryKey: ["lesson-blocks", lessonId],
-    queryFn: async () => (await api.get(`/lessons/${lessonId}/blocks`)).data,
-    enabled: !!lessonId,
-  });
-
-  const createBlock = useMutation({
-    mutationFn: (type: string) =>
-      api.post(`/lessons/${lessonId}/blocks`, { type, content: "", language: "", caption: "" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["lesson-blocks", lessonId] }),
-  });
-
-  const updateBlock = useMutation({
-    mutationFn: ({ id, ...data }: { id: number; content: string; language: string; caption: string }) =>
-      api.put(`/lesson-blocks/${id}`, data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["lesson-blocks", lessonId] }),
-  });
-
-  const deleteBlock = useMutation({
-    mutationFn: (blockId: number) => api.delete(`/lesson-blocks/${blockId}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["lesson-blocks", lessonId] }),
-  });
-
-  const reorderBlocks = useMutation({
-    mutationFn: (order: { id: number; order_num: number }[]) =>
-      api.post(`/lessons/${lessonId}/blocks/reorder`, { order }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["lesson-blocks", lessonId] }),
-  });
-
-  const publishLesson = useMutation({
-    mutationFn: (vis: string) => api.post(`/lessons/${lessonId}/publish`, { visibility: vis }),
-    onSuccess: () => { refetchLesson(); },
-  });
-
-  const unpublishLesson = useMutation({
-    mutationFn: () => api.post(`/lessons/${lessonId}/unpublish`),
-    onSuccess: () => { refetchLesson(); },
-  });
-
-  const updateTopics = useMutation({
-    mutationFn: () => api.put(`/lessons/${lessonId}/topics`, {
-      topic_id: topicId ? Number(topicId) : null,
-      subtopic_id: subtopicId ? Number(subtopicId) : null,
-    }),
-    onSuccess: () => {
-      refetchLesson();
-      qc.invalidateQueries({ queryKey: ["teacher-lessons-mine"] });
-      setShowTopicPanel(false);
-    },
-  });
-
-  function handleMove(blockId: number, dir: -1 | 1) {
-    const idx = blocks.findIndex(b => b.id === blockId);
-    if ((dir === -1 && idx === 0) || (dir === 1 && idx === blocks.length - 1)) return;
-    const current = blocks[idx];
-    const other = blocks[idx + dir];
-    reorderBlocks.mutate([
-      { id: current.id, order_num: other.order_num },
-      { id: other.id, order_num: current.order_num },
-    ]);
+  function contentFor(block: Block): Content { return draftSnapshot.get(block.id)?.data ?? { content: block.content, language: block.language, caption: block.caption }; }
+  function changeBlock(block: Block, patch: Partial<Content>) {
+    let draft = drafts.current.get(block.id);
+    if (!draft) { draft = { data: { content: block.content, language: block.language, caption: block.caption }, revision: 0, savedRevision: 0, status: "saved" }; drafts.current.set(block.id, draft); }
+    draft.data = { ...draft.data, ...patch }; draft.revision++; draft.status = draft.running ? "saving" : "dirty";
+    setActionError(""); redraw();
   }
+  function saveBlock(blockId: number): Promise<boolean> {
+    const draft = drafts.current.get(blockId);
+    if (!draft) return Promise.resolve(true);
+    if (draft.running) return draft.running;
+    if (draft.savedRevision === draft.revision) return Promise.resolve(true);
+    draft.status = "saving"; redraw();
+    draft.running = Promise.resolve().then(async () => {
+      while (draft.savedRevision !== draft.revision) {
+        const revision = draft.revision, data = { ...draft.data };
+        try {
+          const response = await api.put(`/lesson-blocks/${blockId}`, data);
+          draft.savedRevision = revision;
+          qc.setQueryData<Block[]>(["lesson-blocks", lessonId], previous => previous?.map(block => block.id === blockId ? { ...block, ...data, ...response.data } : block));
+        } catch { draft.status = "error"; redraw(); return false; }
+      }
+      draft.status = "saved"; redraw(); return true;
+    }).finally(() => { draft.running = undefined; });
+    return draft.running;
+  }
+  async function afterSaving(action?: () => void | Promise<unknown>) {
+    if (busy || uploading) return;
+    setBusy(true); setActionError("");
+    try {
+      for (const block of blocks) {
+        if (!(await saveBlock(block.id))) { setSelectedId(block.id); setActionError(`Не удалось сохранить шаг ${blocks.findIndex(item => item.id === block.id) + 1}. Черновик остаётся в редакторе.`); return; }
+      }
+      await action?.();
+    } catch { setActionError("Не удалось выполнить действие. Изменения остаются в редакторе. Повторите попытку."); }
+    finally { setBusy(false); }
+  }
+  const createBlock = useMutation({
+    mutationFn: (type: string) => api.post(`/lessons/${lessonId}/blocks`, { type, content: "", language: "", caption: "" }),
+    onSuccess: ({ data }) => { qc.setQueryData<Block[]>(["lesson-blocks", lessonId], previous => [...(previous ?? []), data]); setSelectedId(data.id); setShowTypeMenu(false); setShowSteps(false); },
+    onError: () => setActionError("Не удалось добавить шаг. Повторите попытку."),
+  });
+  const reorder = useMutation({
+    mutationFn: (next: Block[]) => api.post(`/lessons/${lessonId}/blocks/reorder`, { order: next.map((block,index) => ({ id: block.id, order_num: index })) }),
+    onSuccess: (_, next) => qc.setQueryData(["lesson-blocks", lessonId], next.map((block,index) => ({ ...block, order_num: index }))),
+    onError: () => setActionError("Порядок шагов не изменён. Не удалось сохранить перестановку; повторите действие."),
+  });
+  const remove = useMutation({
+    mutationFn: (blockId: number) => api.delete(`/lesson-blocks/${blockId}`),
+    onSuccess: (_, blockId) => {
+      const position = blocks.findIndex(block => block.id === blockId), next = blocks.filter(block => block.id !== blockId);
+      drafts.current.delete(blockId); qc.setQueryData(["lesson-blocks", lessonId], next);
+      setSelectedId(next[Math.min(position, next.length - 1)]?.id ?? null); redraw();
+    },
+    onError: () => setActionError("Не удалось удалить шаг. Содержимое сохранено в редакторе."),
+  });
+  const updateTopics = useMutation({ mutationFn: () => api.put(`/lessons/${lessonId}/topics`, { topic_id: topicId || null, subtopic_id: subtopicId || null }), onSuccess: () => { void lessonQuery.refetch(); setShowTopicPanel(false); }, onError: () => setActionError("Не удалось сохранить тему урока.") });
+  const locked = busy || uploading || createBlock.isPending || reorder.isPending || remove.isPending;
+  function move(direction: -1 | 1) {
+    if (!selected || locked || hasSaving) return;
+    const next = [...blocks], destination = selectedIndex + direction;
+    if (destination < 0 || destination >= next.length) return;
+    [next[selectedIndex], next[destination]] = [next[destination], next[selectedIndex]];
+    reorder.mutate(next);
+  }
+  async function uploadImage(file: File, block: Block) {
+    setUploading(true); setActionError("");
+    try {
+      const form = new FormData(); form.append("file", file);
+      const { data } = await api.post("/upload/image", form);
+      changeBlock(block, { content: `${apiOrigin}${data.url}` });
+      if (!(await saveBlock(block.id))) setActionError("Изображение загружено, но шаг не сохранён. Повторите сохранение.");
+    } catch { setActionError("Не удалось загрузить изображение. Повторите попытку."); }
+    finally { setUploading(false); }
+  }
+  if (!validId || lessonQuery.isError) return <div className="page-shell"><p role="alert">Урок недоступен.</p><Button onClick={() => void lessonQuery.refetch()}>Повторить</Button></div>;
+  if (lessonQuery.isPending) return <div className="page-shell" role="status">Загружаем урок…</div>;
+  if (!lesson) return null;
+  const draftStatus = hasError ? "Не удалось сохранить" : hasSaving || busy ? "Сохранение…" : hasDirty ? "Есть несохранённые изменения" : "Все изменения сохранены";
+  return <div className="page-shell max-w-7xl">
+    <header className="mb-5 flex flex-wrap items-start justify-between gap-4">
+      <div className="min-w-0"><button className="mb-2 min-h-11 text-sm text-muted-foreground" onClick={() => { if ((!hasDirty && !uploading) || window.confirm("Выйти из редактора? Несохранённые изменения будут потеряны.")) router.push("/teacher/lessons"); }}>← К урокам</button><h1 className="break-words text-2xl font-semibold">{lesson.title}</h1><div className="mt-2 flex flex-wrap gap-3 text-sm"><span className="text-muted-foreground">{lesson.is_published ? "Опубликован" : "Закрытый черновик"}</span><span role="status" className={hasError ? "text-destructive" : "text-muted-foreground"}>{draftStatus}</span></div></div>
+      <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={locked || !hasDirty} onClick={() => void afterSaving()}>Сохранить всё</Button><Button variant="outline" disabled={locked || blocksQuery.isPending || blocksQuery.isError} onClick={() => void afterSaving(() => router.push(`/teacher/lessons/${lessonId}/preview${selected ? `?step=${selected.id}` : ""}`))}>Предпросмотр</Button><Button disabled={locked || blocksQuery.isPending || blocksQuery.isError} onClick={() => setShowAccessPanel(value => !value)}>{lesson.is_published ? "Настройки публикации" : "Опубликовать"}</Button></div>
+    </header>
+    {lesson.is_published && <p className="mb-4 rounded-xl border border-border bg-muted p-4 text-sm">Урок опубликован. Сохранённые правки сразу видны ученикам. Чтобы работать над закрытым материалом, снимите урок с публикации.</p>}
+    {actionError && <p role="alert" className="mb-4 rounded-xl bg-destructive-surface p-4 text-sm text-destructive">{actionError}</p>}
+    <div className="mb-5 flex flex-wrap gap-2"><Button size="sm" variant="ghost" disabled={locked} onClick={() => setShowTopicPanel(value => !value)}>Предмет и подтема</Button><Button size="sm" variant="ghost" disabled={locked} onClick={() => void afterSaving(() => router.push(`/teacher/lessons/${lessonId}/viewers`))}>Просмотры урока</Button></div>
+    {showTopicPanel && <section className="surface mb-5 space-y-4 p-5"><h2 className="font-semibold">Предмет и подтема</h2><label className="block text-sm">Предмет<select className="control-field mt-2" value={topicId} onChange={event => { setTopicDraft(event.target.value ? Number(event.target.value) : ""); setSubtopicDraft(""); }}><option value="">Не выбран</option>{topics.map(topic => <option key={topic.id} value={topic.id}>{topic.name}</option>)}</select></label><label className="block text-sm">Подтема<select className="control-field mt-2" disabled={!topicId} value={subtopicId} onChange={event => setSubtopicDraft(event.target.value ? Number(event.target.value) : "")}><option value="">Не выбрана</option>{subtopics.map(topic => <option key={topic.id} value={topic.id}>{topic.name}</option>)}</select></label><Button size="sm" loading={updateTopics.isPending} onClick={() => updateTopics.mutate()}>Сохранить настройки</Button></section>}
+    {showAccessPanel && <section className="surface mb-5 p-5"><h2 className="mb-3 font-semibold">Публикация урока</h2><p className="mb-4 text-sm text-muted-foreground">Перед публикацией сохраним все изменения шагов.</p><div className="grid gap-2 sm:grid-cols-2">{[{value:"all",label:"Для всех",desc:"Все пользователи"},{value:"school",label:"Школа",desc:"Мои школьные группы"},{value:"course",label:"Курс",desc:"Мои группы курсов"},{value:"private",label:"Приватный",desc:"Только предоставленный доступ"}].map(option => <Button key={option.value} variant="outline" disabled={locked || blocksQuery.isPending || blocksQuery.isError} className="h-auto min-h-16 flex-col items-start" onClick={() => void afterSaving(async () => { await api.post(`/lessons/${lessonId}/publish`,{visibility:option.value}); await lessonQuery.refetch(); setShowAccessPanel(false); })}><span>{option.label}</span><span className="text-xs font-normal text-muted-foreground">{option.desc}</span></Button>)}</div>{lesson.is_published && <Button variant="destructive" className="mt-4" disabled={locked} onClick={() => void afterSaving(async () => { await api.post(`/lessons/${lessonId}/unpublish`); await lessonQuery.refetch(); setShowAccessPanel(false); })}>Снять с публикации</Button>}</section>}
+    {lesson.is_published && lesson.visibility === "private" && <AccessPanel lessonId={lessonId} />}
+    {blocksQuery.isError ? <section className="surface p-6" role="alert"><p>Не удалось загрузить шаги урока.</p><Button variant="outline" onClick={() => void blocksQuery.refetch()}>Повторить</Button></section> : blocksQuery.isPending ? <section className="surface p-6" role="status">Загружаем шаги…</section> : <div className="grid items-start gap-5 lg:grid-cols-[240px_minmax(0,1fr)]">
+      <aside className="surface min-w-0 p-3"><button className="flex min-h-11 w-full items-center justify-between px-2 text-left font-semibold lg:pointer-events-none" onClick={() => setShowSteps(value => !value)} aria-expanded={showSteps}><span>Шаги урока · {blocks.length}</span><span className="lg:hidden">{showSteps ? "−" : "+"}</span></button><nav aria-label="Шаги урока" className={`${showSteps ? "block" : "hidden"} mt-2 space-y-1 lg:block`}>{blocks.map((block,index) => { const draft = draftSnapshot.get(block.id), data = contentFor(block); return <button key={block.id} disabled={locked} aria-current={selected?.id === block.id ? "step" : undefined} className={`flex min-h-16 w-full gap-3 rounded-xl p-3 text-left ${selected?.id === block.id ? "bg-accent text-primary" : "hover:bg-muted"}`} onClick={() => { setSelectedId(block.id); setShowSteps(false); }}><span className="shrink-0 text-sm font-semibold">{index+1}</span><span className="min-w-0"><span className="block text-sm font-medium">{blockType(block)}</span><span className="mt-1 block truncate text-xs text-muted-foreground">{(block.type === "image" ? data.caption : data.content).split("\n")[0] || "Пустой шаг"}</span>{draft && draft.status !== "saved" && <span className={`mt-1 block text-xs ${draft.status === "error" ? "text-destructive" : "text-muted-foreground"}`}>{draft.status === "saving" ? "Сохранение…" : draft.status === "error" ? "Ошибка сохранения" : "Не сохранено"}</span>}</span></button>; })}</nav><Button variant="outline" className="mt-3 w-full" disabled={locked || hasSaving} aria-expanded={showTypeMenu} onClick={() => setShowTypeMenu(value => !value)}>+ Добавить шаг</Button>{showTypeMenu && <div className="mt-2 space-y-1" aria-label="Тип нового шага">{BLOCK_TYPES.map(type => <button key={type.value} disabled={locked} className="flex min-h-14 w-full gap-3 rounded-lg p-3 text-left hover:bg-muted" onClick={() => createBlock.mutate(type.value)}><span aria-hidden="true">{type.icon}</span><span><span className="block text-sm font-medium">{type.label}</span><span className="text-xs text-muted-foreground">{type.description}</span></span></button>)}</div>}</aside>
+      <section className="min-w-0">{selected ? <div className="surface overflow-hidden"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4"><h2 className="font-semibold">Шаг {selectedIndex+1}. {blockType(selected)}</h2><div className="flex flex-wrap gap-2"><Button size="sm" variant="ghost" disabled={locked || hasSaving || selectedIndex === 0} onClick={() => move(-1)}>↑ Выше</Button><Button size="sm" variant="ghost" disabled={locked || hasSaving || selectedIndex === blocks.length-1} onClick={() => move(1)}>↓ Ниже</Button><Button size="sm" variant="destructive" disabled={locked || hasSaving} onClick={() => { if (window.confirm(`Удалить шаг ${selectedIndex+1}? Его содержимое будет удалено.`)) remove.mutate(selected.id); }}>Удалить</Button></div></div><StepEditor key={selected.id} block={selected} value={contentFor(selected)} disabled={locked} uploading={uploading} status={draftSnapshot.get(selected.id)?.status ?? "saved"} onChange={patch => changeBlock(selected,patch)} onSave={() => saveBlock(selected.id)} onUpload={file => uploadImage(file,selected)} /><div className="flex flex-wrap justify-between gap-2 border-t border-border p-4"><Button variant="outline" disabled={locked || selectedIndex===0} onClick={() => setSelectedId(blocks[selectedIndex-1].id)}>← Предыдущий шаг</Button><Button variant="outline" disabled={locked || selectedIndex===blocks.length-1} onClick={() => setSelectedId(blocks[selectedIndex+1].id)}>Следующий шаг →</Button></div></div> : <div className="surface p-8 text-center"><h2 className="text-lg font-semibold">Начните с первого шага</h2><p className="mt-2 text-sm text-muted-foreground">Разделите урок на небольшие части: объяснение, пример или иллюстрацию.</p><Button className="mt-5" onClick={() => setShowTypeMenu(true)}>Добавить первый шаг</Button></div>}</section>
+    </div>}
+  </div>;
+}
 
-  return (
-    <div className="p-4 md:p-6 max-w-3xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center gap-3 mb-6">
-        <button
-          onClick={() => router.push("/teacher/lessons")}
-          className="text-muted-foreground hover:text-foreground transition-colors p-1"
-        >
-          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="m15 18-6-6 6-6"/>
-          </svg>
-        </button>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h1 className="text-lg font-bold truncate">{lesson?.title ?? "..."}</h1>
-            {lesson && (
-              <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${
-                lesson.is_published ? "bg-green-500/10 text-green-400" : "bg-muted text-muted-foreground"
-              }`}>
-                {lesson.is_published ? "Опубликован" : "Черновик"}
-              </span>
-            )}
-          </div>
-          {lesson?.is_published && (
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {lesson.view_count} просмотр{lesson.view_count === 1 ? "" : lesson.view_count < 5 ? "а" : "ов"}
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={() => router.push(`/teacher/lessons/${lessonId}/viewers`)}
-            className="text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-1.5 transition-colors"
-          >
-            👁 Просмотры
-          </button>
-          <button
-            onClick={() => router.push(`/teacher/lessons/${lessonId}/preview`)}
-            className="text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-1.5 transition-colors"
-          >
-            Предпросмотр ↗
-          </button>
-          <button
-            onClick={() => setShowTopicPanel(!showTopicPanel)}
-            className="text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-1.5 transition-colors"
-          >
-            📚 Тема
-          </button>
-          {lesson && !lesson.is_published ? (
-            <button
-              onClick={() => setShowAccessPanel(!showAccessPanel)}
-              className="text-xs bg-primary text-primary-foreground rounded-lg px-3 py-1.5 hover:bg-primary/90 transition-colors"
-            >
-              Опубликовать
-            </button>
-          ) : lesson?.is_published ? (
-            <button
-              onClick={() => unpublishLesson.mutate()}
-              className="text-xs border border-border rounded-lg px-3 py-1.5 text-muted-foreground hover:text-destructive hover:border-destructive transition-colors"
-            >
-              Снять
-            </button>
-          ) : null}
-        </div>
-      </div>
-
-      {/* Publish panel */}
-      {showAccessPanel && lesson && !lesson.is_published && (
-        <div className="mb-5 border border-primary/30 bg-primary/5 rounded-2xl p-4">
-          <p className="text-sm font-semibold mb-3">Выберите аудиторию</p>
-          <div className="grid grid-cols-2 gap-2 mb-3">
-            {(["all","school","course","private"] as const).map(v => {
-              const labels: Record<string, {label: string; desc: string}> = {
-                all:     { label: "Для всех",  desc: "Все пользователи" },
-                school:  { label: "Школа",     desc: "Мои школьные группы" },
-                course:  { label: "Курс",      desc: "Мои курсы" },
-                private: { label: "Приватный", desc: "Явный доступ" },
-              };
-              return (
-                <button key={v} onClick={() => publishLesson.mutate(v)}
-                  disabled={publishLesson.isPending}
-                  className="p-3 rounded-xl border border-border bg-card hover:border-primary text-left transition-colors disabled:opacity-50">
-                  <p className="text-sm font-medium">{labels[v].label}</p>
-                  <p className="text-xs text-muted-foreground">{labels[v].desc}</p>
-                </button>
-              );
-            })}
-          </div>
-          <button onClick={() => setShowAccessPanel(false)} className="text-xs text-muted-foreground hover:text-foreground">
-            Отмена
-          </button>
-        </div>
-      )}
-
-      {/* Topic panel */}
-      {showTopicPanel && (
-        <div className="mb-5 border border-blue-500/30 bg-blue-500/5 rounded-2xl p-4">
-          <p className="text-sm font-semibold mb-3">Выберите тему и подтему</p>
-          <div className="flex flex-col gap-3 mb-3">
-            <div>
-              <label className="text-xs font-medium block mb-1">Предмет</label>
-              <select
-                value={topicId}
-                onChange={e => {
-                  setTopicId(e.target.value ? Number(e.target.value) : "");
-                  setSubtopicId("");
-                }}
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-primary"
-              >
-                <option value="">— Не выбран —</option>
-                {topics.map(t => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
-            </div>
-            {topicId && subtopicsForTopic.length > 0 && (
-              <div>
-                <label className="text-xs font-medium block mb-1">Подтема</label>
-                <select
-                  value={subtopicId}
-                  onChange={e => setSubtopicId(e.target.value ? Number(e.target.value) : "")}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-primary"
-                >
-                  <option value="">— Не выбрана —</option>
-                  {subtopicsForTopic.map(st => (
-                    <option key={st.id} value={st.id}>{st.name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="default"
-              loading={updateTopics.isPending}
-              onClick={() => updateTopics.mutate()}
-            >
-              Сохранить
-            </Button>
-            <button
-              onClick={() => setShowTopicPanel(false)}
-              className="text-xs text-muted-foreground hover:text-foreground"
-            >
-              Отмена
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Private access management */}
-      {lesson?.is_published && lesson.visibility === "private" && (
-        <AccessPanel lessonId={lessonId} />
-      )}
-
-      {/* Blocks list */}
-      {isLoading ? (
-        <div className="flex flex-col gap-3">
-          {[1, 2].map(i => <div key={i} className="h-32 bg-muted/30 rounded-xl animate-pulse" />)}
-        </div>
-      ) : (
-        <div className="flex flex-col gap-3">
-          {blocks.length === 0 && (
-            <div className="text-center py-10 text-muted-foreground text-sm border-2 border-dashed border-border rounded-xl">
-              Нет блоков. Добавьте первый блок ниже.
-            </div>
-          )}
-          {blocks.map((block, idx) => (
-            <BlockEditor
-              key={block.id}
-              block={block}
-              isFirst={idx === 0}
-              isLast={idx === blocks.length - 1}
-              saving={updateBlock.isPending}
-              onSave={data => updateBlock.mutate({ id: block.id, ...data })}
-              onDelete={() => deleteBlock.mutate(block.id)}
-              onMove={dir => handleMove(block.id, dir)}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* Add block */}
-      <div className="relative mt-4">
-        <button
-          onClick={() => setShowTypeMenu(!showTypeMenu)}
-          className="w-full flex items-center justify-center gap-2 border-2 border-dashed border-border rounded-xl py-3 text-sm text-muted-foreground hover:border-primary hover:text-primary transition-colors"
-        >
-          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M12 5v14M5 12h14"/>
-          </svg>
-          Добавить блок
-        </button>
-        {showTypeMenu && (
-          <div className="absolute bottom-full mb-2 left-0 right-0 bg-card border border-border rounded-xl overflow-hidden z-10 shadow-xl">
-            {BLOCK_TYPES.map(t => (
-              <button
-                key={t.value}
-                onClick={() => { createBlock.mutate(t.value); setShowTypeMenu(false); }}
-                className="w-full flex items-center gap-3 px-4 py-3 text-sm hover:bg-muted transition-colors"
-              >
-                <span className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm ${TYPE_COLORS[t.value] ?? ""}`}>
-                  {t.icon}
-                </span>
-                <span className="font-medium">{t.label}</span>
-                <span className="ml-auto text-xs text-muted-foreground">
-                  {t.value === "text" && "Текстовый абзац"}
-                  {t.value === "code" && "Блок кода с подсветкой"}
-                  {t.value === "image" && "Изображение по URL"}
-                  {t.value === "note" && "Выделенная заметка"}
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
+function StepEditor({ block, value, disabled, uploading, status, onChange, onSave, onUpload }: { block: Block; value: Content; disabled: boolean; uploading: boolean; status: Draft["status"]; onChange: (patch: Partial<Content>) => void; onSave: () => Promise<boolean>; onUpload: (file: File) => Promise<void> }) {
+  return <div className="space-y-4 p-5"><fieldset disabled={disabled} className="space-y-4"><legend className="sr-only">Содержимое шага</legend>{block.type === "image" ? <>
+    <label className="block text-sm font-medium">Ссылка на изображение<input type="url" className="control-field mt-2" value={value.content} onChange={event => onChange({ content:event.target.value })} onBlur={() => void onSave()} placeholder="https://…" /></label>
+    <label className="block text-sm font-medium">Загрузить изображение<input type="file" className="mt-2 block w-full text-sm" accept=".jpg,.jpeg,.png,.gif,.webp" onChange={event => { const file=event.target.files?.[0]; event.target.value=""; if(file) void onUpload(file); }} /></label>
+    <label className="block text-sm font-medium">Подпись<input className="control-field mt-2" value={value.caption} onChange={event => onChange({caption:event.target.value})} onBlur={() => void onSave()} /></label>
+    {value.content && <div className="rounded-xl border border-border p-3">{/* eslint-disable-next-line @next/next/no-img-element */}<img src={value.content.startsWith("/static/") ? `${apiOrigin}${value.content}` : value.content} alt={value.caption || "Изображение шага"} className="max-h-96 max-w-full rounded-lg object-contain" /></div>}
+  </> : <>
+    {block.type === "code" && <label className="block text-sm font-medium">Язык программирования<input className="control-field mt-2" value={value.language} onChange={event => onChange({language:event.target.value})} onBlur={() => void onSave()} placeholder="python, javascript…" /></label>}
+    <label className="block text-sm font-medium">{block.type === "code" ? "Код" : block.type === "note" ? "Текст заметки" : "Текст шага"}<textarea className={`control-field mt-2 min-h-64 resize-y leading-relaxed ${block.type === "code" ? "font-mono" : ""}`} rows={12} value={value.content} onChange={event => onChange({content:event.target.value})} onBlur={() => void onSave()} placeholder="Добавьте содержимое шага…" /></label>
+    {block.type === "text" && <p className="text-xs text-muted-foreground">Разделяйте абзацы пустой строкой. Шаги помогают проходить материал небольшими частями.</p>}
+  </>}</fieldset><div className="flex flex-wrap items-center justify-between gap-3"><p role="status" className={`text-sm ${status === "error" ? "text-destructive" : "text-muted-foreground"}`}>{uploading ? "Загружаем изображение…" : status === "dirty" ? "Есть несохранённые изменения" : status === "saving" ? "Сохранение…" : status === "error" ? "Не удалось сохранить. Черновик остаётся в редакторе." : "Шаг сохранён"}</p><Button variant="outline" disabled={disabled || status === "saved"} loading={status === "saving"} onClick={() => void onSave()}>{status === "error" ? "Повторить сохранение" : "Сохранить шаг"}</Button></div></div>;
 }
 
 // ── AccessPanel ───────────────────────────────────────────────────────────────
@@ -375,11 +198,11 @@ function AccessPanel({ lessonId }: { lessonId: number }) {
 
   const { data: access = [] } = useQuery<AccessEntry[]>({
     queryKey: ["lesson-access", lessonId],
-    queryFn: async () => (await api.get(`/lessons/${lessonId}/access`)).data,
+    queryFn: async () => (await api.get(`/lessons/${lessonId}/access`)).data ?? [],
   });
   const { data: groups = [] } = useQuery<Group[]>({
     queryKey: ["groups"],
-    queryFn: async () => (await api.get("/groups")).data,
+    queryFn: async () => (await api.get("/groups")).data ?? [],
   });
 
   const grant = useMutation({
@@ -399,7 +222,7 @@ function AccessPanel({ lessonId }: { lessonId: number }) {
       <p className="text-sm font-semibold mb-3">Управление доступом</p>
 
       {/* Add access */}
-      <div className="flex gap-2 mb-3">
+      <div className="flex flex-wrap gap-2 mb-3">
         <select value={addType} onChange={e => { setAddType(e.target.value as "group" | "student"); setSelectedRef(""); }}
           className="border border-border rounded-lg px-2 py-1.5 text-xs bg-card focus:outline-none">
           <option value="group">Группа</option>
@@ -433,188 +256,6 @@ function AccessPanel({ lessonId }: { lessonId: number }) {
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-interface BlockEditorProps {
-  block: Block;
-  isFirst: boolean;
-  isLast: boolean;
-  saving: boolean;
-  onSave: (data: { content: string; language: string; caption: string }) => void;
-  onDelete: () => void;
-  onMove: (dir: -1 | 1) => void;
-}
-
-function BlockEditor({ block, isFirst, isLast, saving, onSave, onDelete, onMove }: BlockEditorProps) {
-  const [content, setContent] = useState(block.content);
-  const [language, setLanguage] = useState(block.language);
-  const [caption, setCaption] = useState(block.caption);
-  const [dirty, setDirty] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState("");
-
-  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
-    setUploadError("");
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const { data } = await api.post("/upload/image", formData);
-      const url = `${apiOrigin}${data.url}`;
-      setContent(url);
-      onSave({ content: url, language, caption });
-    } catch {
-      setUploadError("Ошибка загрузки. Попробуйте ещё раз.");
-    } finally {
-      setUploading(false);
-      e.target.value = "";
-    }
-  }
-
-  useEffect(() => {
-    setContent(block.content);
-    setLanguage(block.language);
-    setCaption(block.caption);
-    setDirty(false);
-  }, [block.content, block.language, block.caption]);
-
-  function handleBlur() {
-    if (dirty) {
-      onSave({ content, language, caption });
-      setDirty(false);
-    }
-  }
-
-  const typeCfg = BLOCK_TYPES.find(t => t.value === block.type) ?? BLOCK_TYPES[0];
-  const colorCls = TYPE_COLORS[block.type] ?? "";
-
-  return (
-    <div className="border border-border rounded-xl bg-card overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2 bg-muted/20 border-b border-border">
-        <span className={`px-2 py-0.5 rounded-md text-xs font-medium ${colorCls}`}>
-          {typeCfg.icon} {typeCfg.label}
-        </span>
-        {dirty && (
-          <span className="text-xs text-muted-foreground ml-1">· несохранено</span>
-        )}
-        {saving && <span className="text-xs text-muted-foreground ml-1">· сохранение...</span>}
-        <div className="ml-auto flex items-center gap-0.5">
-          <button
-            onClick={() => onMove(-1)} disabled={isFirst}
-            className="p-1.5 rounded text-muted-foreground hover:text-foreground disabled:opacity-30 hover:bg-muted transition-colors"
-          >
-            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m18 15-6-6-6 6"/></svg>
-          </button>
-          <button
-            onClick={() => onMove(1)} disabled={isLast}
-            className="p-1.5 rounded text-muted-foreground hover:text-foreground disabled:opacity-30 hover:bg-muted transition-colors"
-          >
-            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6"/></svg>
-          </button>
-          <button
-            onClick={onDelete}
-            className="p-1.5 rounded text-destructive hover:bg-destructive/10 transition-colors ml-1"
-          >
-            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-            </svg>
-          </button>
-        </div>
-      </div>
-
-      {/* Editor */}
-      <div className="p-3 flex flex-col gap-2">
-        {block.type === "image" ? (
-          <>
-            {/* URL input */}
-            <input
-              type="url"
-              value={content}
-              onChange={e => { setContent(e.target.value); setDirty(true); }}
-              onBlur={handleBlur}
-              placeholder="https://... (вставьте URL)"
-              className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-
-            {/* Divider */}
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <div className="flex-1 border-t border-border" />
-              или
-              <div className="flex-1 border-t border-border" />
-            </div>
-
-            {/* File upload */}
-            <label className={`flex items-center justify-center gap-2 border-2 border-dashed border-border rounded-lg px-3 py-2.5 text-sm cursor-pointer transition-colors ${
-              uploading ? "opacity-50 cursor-not-allowed" : "hover:border-primary hover:text-primary"
-            }`}>
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                <polyline points="17 8 12 3 7 8"/>
-                <line x1="12" y1="3" x2="12" y2="15"/>
-              </svg>
-              {uploading ? "Загрузка..." : "Загрузить с компьютера"}
-              <input
-                type="file"
-                accept=".jpg,.jpeg,.png,.gif,.webp"
-                className="hidden"
-                disabled={uploading}
-                onChange={handleFileChange}
-              />
-            </label>
-            {uploadError && <p className="text-xs text-destructive">{uploadError}</p>}
-
-            {/* Caption */}
-            <input
-              type="text"
-              value={caption}
-              onChange={e => { setCaption(e.target.value); setDirty(true); }}
-              onBlur={handleBlur}
-              placeholder="Подпись к изображению (необязательно)"
-              className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-
-            {/* Preview */}
-            {content && (
-              <div className="mt-1 rounded-lg overflow-hidden border border-border max-w-xs">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={content} alt={caption || ""} className="max-w-full" />
-              </div>
-            )}
-          </>
-        ) : (
-          <>
-            {block.type === "code" && (
-              <input
-                type="text"
-                value={language}
-                onChange={e => { setLanguage(e.target.value); setDirty(true); }}
-                onBlur={handleBlur}
-                placeholder="Язык (go, python, javascript...)"
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-primary font-mono"
-              />
-            )}
-            <textarea
-              value={content}
-              onChange={e => { setContent(e.target.value); setDirty(true); }}
-              onBlur={handleBlur}
-              rows={block.type === "code" ? 10 : block.type === "note" ? 3 : 5}
-              placeholder={
-                block.type === "code"  ? "Введите код..." :
-                block.type === "note"  ? "Текст заметки (будет выделен рамкой)..." :
-                "Введите текст. Разделите абзацы пустой строкой."
-              }
-              className={`w-full border border-border rounded-lg px-3 py-2.5 text-sm bg-card resize-y focus:outline-none focus:ring-2 focus:ring-primary leading-relaxed ${
-                block.type === "code" ? "font-mono text-[13px]" : ""
-              }`}
-            />
-          </>
-        )}
-      </div>
     </div>
   );
 }

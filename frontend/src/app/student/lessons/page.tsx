@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { AsyncState } from "@/components/ui/async-state";
 
 interface Lesson {
   id: number;
@@ -18,9 +19,9 @@ interface Lesson {
   visibility: string;
   view_count: number;
   topic_id: number | null;
-  topic_name: string;
+  topic_name: string | null;
   subtopic_id: number | null;
-  subtopic_name: string;
+  subtopic_name: string | null;
 }
 
 const subjectConfig: Record<string, { symbol: string; color: string }> = {
@@ -47,14 +48,14 @@ export default function StudentLessonsPage() {
   const router = useRouter();
   const [search, setSearch] = useState("");
 
-  const { data: lessons = [], isLoading } = useQuery<Lesson[]>({
+  const { data: lessons = [], isLoading, isError, refetch } = useQuery<Lesson[]>({
     queryKey: ["student-lessons-available"],
     queryFn: async () => (await api.get("/lessons/available")).data,
   });
 
   const filtered = lessons.filter(l =>
     l.title.toLowerCase().includes(search.toLowerCase()) ||
-    l.topic_name.toLowerCase().includes(search.toLowerCase())
+    (l.topic_name ?? "").toLowerCase().includes(search.toLowerCase())
   );
 
   const grouped = filtered.reduce((acc: Record<string, Lesson[]>, l) => {
@@ -91,6 +92,7 @@ export default function StudentLessonsPage() {
           <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
         </svg>
         <input
+          aria-label="Поиск уроков"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Поиск по названию или предмету..."
@@ -99,7 +101,7 @@ export default function StudentLessonsPage() {
       </div>
 
       {/* Loading */}
-      {isLoading ? (
+      {isError ? <AsyncState kind="error" title="Не удалось загрузить уроки" onRetry={() => void refetch()} /> : isLoading ? (
         <div className="flex flex-col gap-3">
           {[1, 2, 3].map(i => <div key={i} className="h-20 bg-muted/30 rounded-xl animate-pulse" />)}
         </div>

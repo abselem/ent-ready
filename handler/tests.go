@@ -782,8 +782,8 @@ func (h *TestHandler) CreateSubtopic(c *gin.Context) {
 type updateQuestionReq struct {
 	AllowGeneration *bool   `json:"allow_generation"`
 	Text            string  `json:"text" binding:"required"`
-	OrderNum        int16   `json:"order_num"`
-	Points          int16   `json:"points"`
+	OrderNum        *int16  `json:"order_num"`
+	Points          *int16  `json:"points"`
 	TopicID         *int32  `json:"topic_id"`
 	SubtopicID      *int32  `json:"subtopic_id"`
 	Explanation     *string `json:"explanation"`
@@ -804,8 +804,21 @@ func (h *TestHandler) UpdateQuestion(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if req.Points == 0 {
-		req.Points = 1
+	// The bank metadata form does not send scoring/order fields. Omission must
+	// preserve their values instead of silently resetting linked tests' scoring.
+	var orderNum, points int16
+	if err := h.pool.QueryRow(ctx, `SELECT order_num, points FROM questions WHERE id=$1`, id).Scan(&orderNum, &points); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "question not found"})
+		return
+	}
+	if req.OrderNum != nil {
+		orderNum = *req.OrderNum
+	}
+	if req.Points != nil {
+		points = *req.Points
+		if points == 0 {
+			points = 1
+		}
 	}
 	udiff := req.Difficulty
 	if udiff < 1 || udiff > 3 {
@@ -814,8 +827,8 @@ func (h *TestHandler) UpdateQuestion(c *gin.Context) {
 	params := db.UpdateQuestionParams{
 		ID:         id,
 		Text:       req.Text,
-		OrderNum:   req.OrderNum,
-		Points:     req.Points,
+		OrderNum:   orderNum,
+		Points:     points,
 		Difficulty: udiff,
 	}
 	if req.TopicID != nil {

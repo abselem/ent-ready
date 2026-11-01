@@ -21,7 +21,7 @@ export default function TestResultsPage({ params }: { params: Promise<{ id: stri
   const { id } = use(params);
   const router = useRouter();
 
-  const { data, isLoading } = useQuery<{ test: { title: string }; results: ResultRow[] }>({
+  const { data, isLoading, isError, refetch } = useQuery<{ test: { title: string }; results: ResultRow[] }>({
     queryKey: ["test-results", id],
     queryFn: async () => (await api.get(`/tests/${id}/results`)).data,
   });
@@ -46,7 +46,7 @@ export default function TestResultsPage({ params }: { params: Promise<{ id: stri
         <h1 className="text-2xl font-bold">{data?.test.title ?? "Результаты"}</h1>
       </div>
 
-      {isLoading ? (
+      {isError ? (<div role="alert"><p>Не удалось загрузить результаты.</p><Button variant="outline" onClick={() => void refetch()}>Повторить</Button></div>) : isLoading ? (
         <div className="text-center py-12 text-muted-foreground">Загрузка...</div>
       ) : !data?.results.length ? (
         <div className="text-center py-12 text-muted-foreground">Никто ещё не прошёл тест</div>

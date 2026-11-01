@@ -73,9 +73,9 @@ export default function TeacherProfilePage() {
               value={lastName}
               onChange={(e) => setLastName(e.target.value)}
             />
-            {error && <p className="text-sm text-destructive">{error}</p>}
+            {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
             {saved && <p className="text-sm text-green-600">Сохранено!</p>}
-            <Button loading={updateProfile.isPending} onClick={() => updateProfile.mutate()}>
+            <Button loading={updateProfile.isPending} onClick={() => { setError(""); setSaved(false); updateProfile.mutate(); }}>
               Сохранить
             </Button>
           </div>
@@ -100,7 +100,7 @@ export default function TeacherProfilePage() {
               variant="outline"
               loading={setPassword.isPending}
               disabled={newPassword.length < 8 || !currentPassword}
-              onClick={() => setPassword.mutate()}
+              onClick={() => { setError(""); setPassword.mutate(); }}
             >
               Сменить пароль
             </Button>
