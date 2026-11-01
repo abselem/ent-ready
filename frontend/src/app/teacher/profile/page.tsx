@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useMutation } from "@tanstack/react-query";
 import { api, signOut } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
@@ -79,6 +80,16 @@ export default function TeacherProfilePage() {
               Сохранить
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="mb-4">
+        <CardHeader><CardTitle>Рабочие пространства</CardTitle></CardHeader>
+        <CardContent>
+          <p>Создайте организацию и настройте её параметры.</p>
+          <Link href="/teacher/organizations" className="mt-3 inline-flex min-h-11 items-center text-sm font-medium text-primary underline-offset-4 hover:underline">
+            Управлять рабочими пространствами
+          </Link>
         </CardContent>
       </Card>
 

@@ -32,6 +32,7 @@ func NewRouter(pool *pgxpool.Pool, cfg *config.Config, n notify.Sender) *gin.Eng
 	ent := NewENTHandler(pool, cfg)
 	tg := NewTelegramHandler(pool, cfg, n)
 	topicH := NewTopicHandler(pool)
+	organizations := NewOrganizationHandler(pool)
 
 	v1 := r.Group("/api/v1")
 
@@ -59,6 +60,13 @@ func NewRouter(pool *pgxpool.Pool, cfg *config.Config, n notify.Sender) *gin.Eng
 	secure := v1.Group("/", middleware.JWT(cfg.JWT.AccessSecret, pool))
 	{
 		secure.POST("/auth/logout", auth.Logout)
+
+		// Workspace settings are isolated from the legacy personal learning APIs.
+		secure.GET("/organizations", organizations.List)
+		secure.POST("/organizations", organizations.Create)
+		secure.GET("/organizations/:id", organizations.Get)
+		secure.PATCH("/organizations/:id", organizations.Update)
+		secure.GET("/organizations/:id/members", organizations.Members)
 
 		// Профиль
 		secure.GET("/users/me", users.GetMe)

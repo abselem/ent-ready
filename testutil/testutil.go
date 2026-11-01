@@ -115,7 +115,7 @@ func truncate(t *testing.T, pool *pgxpool.Pool) {
 	ctx := context.Background()
 	// Keep the reference taxonomy and roles, but never retain private content
 	// from a previous test (owner_id may use ON DELETE SET NULL).
-	_, err := pool.Exec(ctx, `TRUNCATE lessons, tests, questions, question_contexts,
+	_, err := pool.Exec(ctx, `TRUNCATE organizations, lessons, tests, questions, question_contexts,
         ent_attempts, ban_log, sessions, otp_codes, sms_log, groups, users
         RESTART IDENTITY CASCADE`)
 	if err != nil {

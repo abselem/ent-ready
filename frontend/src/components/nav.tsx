@@ -21,6 +21,9 @@ export function Nav({ items }: NavProps) {
   const teacher = user?.role_id === 1;
 
   function confirmLeave() {
+    if (document.body.dataset.unsavedOrganization === "true") {
+      return window.confirm("Есть несохранённые настройки рабочего пространства. Выйти без сохранения?");
+    }
     if (document.body.dataset.unsavedLesson === "true") {
       return window.confirm("В уроке есть несохранённые изменения. Выйти без сохранения?");
     }
