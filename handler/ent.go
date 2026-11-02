@@ -30,7 +30,7 @@ func (h *ENTHandler) selectByDifficulty(ctx context.Context, topicID int32, diff
 		SELECT id, test_id, text, order_num, points, created_at, owner_id,
 		       topic_id, subtopic_id, explanation, difficulty
 		FROM questions
-		WHERE topic_id = $1 AND difficulty = $2 AND generation_allowed=TRUE
+		WHERE topic_id = $1 AND difficulty = $2 AND generation_allowed=TRUE AND NOT EXISTS(SELECT 1 FROM qa_workspace_accounts a WHERE a.user_id=questions.owner_id)
 		ORDER BY RANDOM() LIMIT $3`, topicID, difficulty, n)
 	if err != nil {
 		return nil, err
@@ -44,7 +44,7 @@ func (h *ENTHandler) selectSingleAnswer(ctx context.Context, topicID int32, n in
 		SELECT q.id, q.test_id, q.text, q.order_num, q.points, q.created_at, q.owner_id,
 		       q.topic_id, q.subtopic_id, q.explanation, q.difficulty
 		FROM questions q
-		WHERE q.topic_id = $1 AND q.generation_allowed=TRUE
+		WHERE q.topic_id = $1 AND q.generation_allowed=TRUE AND NOT EXISTS(SELECT 1 FROM qa_workspace_accounts a WHERE a.user_id=q.owner_id)
 		  AND (SELECT COUNT(*) FROM answer_options ao WHERE ao.question_id = q.id AND ao.is_correct) = 1
 		ORDER BY RANDOM() LIMIT $2`, topicID, n)
 	if err != nil {
@@ -59,7 +59,7 @@ func (h *ENTHandler) selectMultiAnswer(ctx context.Context, topicID int32, n int
 		SELECT q.id, q.test_id, q.text, q.order_num, q.points, q.created_at, q.owner_id,
 		       q.topic_id, q.subtopic_id, q.explanation, q.difficulty
 		FROM questions q
-		WHERE q.topic_id = $1 AND q.generation_allowed=TRUE
+		WHERE q.topic_id = $1 AND q.generation_allowed=TRUE AND NOT EXISTS(SELECT 1 FROM qa_workspace_accounts a WHERE a.user_id=q.owner_id)
 		  AND (SELECT COUNT(*) FROM answer_options ao WHERE ao.question_id = q.id AND ao.is_correct) >= 2
 		ORDER BY RANDOM() LIMIT $2`, topicID, n)
 	if err != nil {

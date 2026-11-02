@@ -12,6 +12,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TransferPreflightCard } from "./transfer-preflight";
+import { useQaSchool } from "@/lib/qa-school";
 
 const roleLabel: Record<OrganizationRole, string> = { owner: "Владелец", admin: "Администратор", teacher: "Преподаватель", student: "Ученик", parent: "Родитель" };
 const gradingLabel = { points: "Баллы", "5": "5-балльная", "10": "10-балльная", "100": "100-балльная" };
@@ -76,6 +77,7 @@ function SettingsFields({ prefix, value, onChange, disabled, errors, nameRef }: 
 }
 
 function OrganizationEditor({ organization, scope, onDirtyChange }: { organization: Organization; scope: Scope; onDirtyChange: (dirty: boolean) => void }) {
+  const { data: qaSchool } = useQaSchool();
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState(() => toSettings(organization));
   const [baseline, setBaseline] = useState(() => toSettings(organization));
@@ -127,7 +129,8 @@ function OrganizationEditor({ organization, scope, onDirtyChange }: { organizati
         {editable && <Button type="submit" loading={save.isPending} disabled={!dirty}>Сохранить настройки</Button>}
       </form>
     </Card>
-    {editable && <TransferPreflightCard organization={organization} scope={scope} />}
+    {editable && !(qaSchool?.is_qa && qaSchool.organization_id === organization.id) && <TransferPreflightCard organization={organization} scope={scope} />}
+    {qaSchool?.is_qa && qaSchool.organization_id === organization.id && <Card><h3 className="mb-2 text-lg font-semibold">Материалы QA-школы</h3><p className="text-sm text-muted-foreground">Тестовые уроки, тесты и результаты сохранены в группе {qaSchool.group_name}.</p><Link className="mt-3 inline-flex min-h-11 items-center text-primary underline" href={`/teacher/groups/${qaSchool.group_id}`}>Открыть группу школы</Link></Card>}
     {editable && <Card>
       <h3 className="mb-4 text-lg font-semibold">Участники</h3>
       {members.isPending ? <AsyncState kind="loading" title="Загружаем участников…" /> : members.isError ?
@@ -141,6 +144,7 @@ function OrganizationEditor({ organization, scope, onDirtyChange }: { organizati
 }
 
 function Workspaces({ scope }: { scope: Scope }) {
+  const { data: qaSchool } = useQaSchool();
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -197,10 +201,10 @@ function Workspaces({ scope }: { scope: Scope }) {
     <Link href="/teacher/profile" className="inline-flex min-h-11 items-center text-sm text-muted-foreground hover:text-foreground" onClick={(event) => {
       if (unsaved && !window.confirm("Есть несохранённые настройки. Выйти без сохранения?")) event.preventDefault();
     }}>← Профиль</Link>
-    <PageHeader title="Рабочие пространства" description="Настройте организацию для школы или частной практики" action={
+    <PageHeader title="Рабочие пространства" description="Настройте организацию для школы или частной практики" action={qaSchool?.is_qa ? undefined :
       <Button ref={createButton} onClick={() => setShowCreate(true)} disabled={showCreate || create.isPending}>Создать пространство</Button>
     } />
-    <Card className="bg-accent"><p className="text-sm leading-relaxed">Здесь настраиваются организации. Группы, уроки и тесты вашего личного кабинета пока не перенесены в рабочие пространства.</p></Card>
+    <Card className="bg-accent"><p className="text-sm leading-relaxed">{qaSchool?.is_qa ? "Ваши тестовые материалы закреплены за QA-школой. Новые уроки и тесты создаются в её группе по умолчанию." : "Здесь настраиваются организации. Группы, уроки и тесты вашего личного кабинета пока не перенесены в рабочие пространства."}</p></Card>
     {message && <p role="status" className="text-sm text-primary">{message}</p>}
     {showCreate && <Card>
       <h2 className="mb-4 text-lg font-semibold">Новое рабочее пространство</h2>

@@ -57,8 +57,10 @@ func NewRouter(pool *pgxpool.Pool, cfg *config.Config, n notify.Sender) *gin.Eng
 	}
 
 	// Защищённые маршруты
-	secure := v1.Group("/", middleware.JWT(cfg.JWT.AccessSecret, pool))
+	secure := v1.Group("/", middleware.JWT(cfg.JWT.AccessSecret, pool), qaBoundary(pool))
 	{
+		secure.GET("/qa/context", qaContext)
+		secure.GET("/qa/assets/subject/:topicId", qaAsset(pool))
 		secure.POST("/auth/logout", auth.Logout)
 
 		// Workspace settings are isolated from the legacy personal learning APIs.

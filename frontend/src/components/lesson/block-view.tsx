@@ -1,5 +1,5 @@
 import { MathText } from "@/components/math-text";
-import { apiOrigin } from "@/lib/api";
+import { LessonImage } from "@/components/lesson/lesson-image";
 import type { LessonBlock } from "./types";
 
 /** The same safe renderer is used by the student player and teacher preview. */
@@ -10,13 +10,9 @@ export function LessonBlockView({ block }: { block: LessonBlock }) {
   </div>;
 
   if (block.type === "image") {
-    const src = block.content.startsWith("/static/") ? `${apiOrigin}${block.content}` : block.content;
-    if (!src) return <p className="text-sm text-muted-foreground">Изображение пока не добавлено.</p>;
-    if (!/^https?:\/\//i.test(src) && !src.startsWith("/static/")) return <p className="text-sm text-muted-foreground">Ссылка на изображение недоступна.</p>;
+    if (!block.content) return <p className="text-sm text-muted-foreground">Изображение пока не добавлено.</p>;
     return <figure className="min-w-0 space-y-3">
-      {/* User-uploaded and external images have variable dimensions and origins. */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={src} alt={block.caption || "Изображение к уроку"} className="mx-auto max-h-[70vh] max-w-full rounded-xl border border-border object-contain" />
+      <LessonImage content={block.content} alt={block.caption || "Изображение к уроку"} className="mx-auto max-h-[70vh] max-w-full rounded-xl border border-border object-contain" />
       {block.caption && <figcaption className="break-words text-center text-sm text-muted-foreground"><MathText text={block.caption} /></figcaption>}
     </figure>;
   }

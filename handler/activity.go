@@ -31,8 +31,8 @@ func (h *ActivityHandler) GetActivity(c *gin.Context) {
 	rows, err := h.pool.Query(ctx, `
 		SELECT date_trunc('day', finished_at AT TIME ZONE 'UTC')::date AS day,
 		       COUNT(*) AS cnt
-		FROM test_attempts
-		WHERE user_id = $1 AND finished_at IS NOT NULL
+		FROM test_attempts ta JOIN tests t ON t.id=ta.test_id
+		WHERE user_id = $1 AND finished_at IS NOT NULL AND qa_resource_access($1,t.created_by,t.group_id)
 		  AND finished_at >= NOW() - INTERVAL '1 year'
 		GROUP BY day
 	`, userID.(int32))
@@ -54,8 +54,8 @@ func (h *ActivityHandler) GetActivity(c *gin.Context) {
 	// Total attempts ever
 	var totalSolved int64
 	h.pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM test_attempts
-		WHERE user_id = $1 AND finished_at IS NOT NULL
+		SELECT COUNT(*) FROM test_attempts ta JOIN tests t ON t.id=ta.test_id
+		WHERE user_id = $1 AND finished_at IS NOT NULL AND qa_resource_access($1,t.created_by,t.group_id)
 	`, userID.(int32)).Scan(&totalSolved)
 
 	// Build 365-day array ending today

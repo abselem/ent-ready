@@ -45,9 +45,9 @@ func (h *TopicHandler) ListTests(c *gin.Context) {
 		            ELSE 'Сгенерированный AI' END AS author_name
 		FROM tests t
 		LEFT JOIN users u ON u.id = t.created_by
-		WHERE t.is_published = TRUE AND t.is_public = TRUE AND t.generated_for IS NULL AND t.topic_id = $1
+		WHERE t.is_published = TRUE AND t.is_public = TRUE AND t.generated_for IS NULL AND t.topic_id = $1 AND qa_resource_access($2,t.created_by,t.group_id)
 		ORDER BY t.created_at DESC
-	`, topicID)
+	`, topicID, c.GetInt32("user_id"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
@@ -94,7 +94,7 @@ func (h *TopicHandler) StartRandomTest(c *gin.Context) {
 	for _, t := range targets {
 		rows, err := h.pool.Query(ctx, `
 			SELECT id, points FROM questions
-			WHERE topic_id=$1 AND difficulty=$2 AND generation_allowed=TRUE
+			WHERE topic_id=$1 AND difficulty=$2 AND generation_allowed=TRUE AND NOT EXISTS(SELECT 1 FROM qa_workspace_accounts a WHERE a.user_id=questions.owner_id)
 			ORDER BY RANDOM()
 			LIMIT $3
 		`, topicID, t.diff, t.count)

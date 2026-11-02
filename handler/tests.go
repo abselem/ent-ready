@@ -1003,7 +1003,7 @@ func (h *TestHandler) ListMyTests(c *gin.Context) {
 	pgRows, err := h.pool.Query(context.Background(), `
 		SELECT id, group_id, title, description, time_limit, max_attempts, is_published,
 		       created_at, updated_at, is_public, created_by, deadline, topic_id
-		FROM tests WHERE created_by = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
+		FROM tests WHERE created_by = $1 AND qa_resource_access($1,created_by,group_id) ORDER BY created_at DESC LIMIT $2 OFFSET $3
 	`, userID.(int32), limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
@@ -1654,7 +1654,7 @@ func (h *TestHandler) ListMyAttempts(c *gin.Context) {
 		FROM test_attempts ta
 		JOIN tests t ON t.id = ta.test_id
 		LEFT JOIN topics tp ON tp.id = t.topic_id
-		WHERE ta.user_id = $1 AND ta.finished_at IS NOT NULL
+		WHERE ta.user_id = $1 AND ta.finished_at IS NOT NULL AND qa_resource_access($1,t.created_by,t.group_id)
 		ORDER BY ta.finished_at DESC
 		LIMIT $2 OFFSET $3
 	`, userID.(int32), limit, offset)

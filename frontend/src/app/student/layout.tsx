@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/auth";
 import { Nav } from "@/components/nav";
+import { QaSchoolBanner } from "@/components/qa-school-banner";
 
 const studentNav = [
   {
@@ -83,6 +84,7 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
     <div className="flex h-full">
       <Nav items={studentNav} />
       <main id="main-content" className="app-main mobile-nav-space flex-1 overflow-y-auto">
+        <QaSchoolBanner />
         {children}
       </main>
     </div>

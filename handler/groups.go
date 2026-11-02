@@ -82,7 +82,13 @@ func (h *GroupHandler) ListMine(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
-	c.JSON(http.StatusOK, groups)
+	visible := make([]db.Group, 0, len(groups))
+	for _, group := range groups {
+		if qaAccess(c, h.pool, group.TeacherID, group.ID) {
+			visible = append(visible, group)
+		}
+	}
+	c.JSON(http.StatusOK, visible)
 }
 
 // GET /api/v1/groups/joined  (student's groups)
@@ -95,6 +101,9 @@ func (h *GroupHandler) ListJoined(c *gin.Context) {
 	}
 	result := make([]any, 0, len(groups))
 	for _, group := range groups {
+		if !qaAccess(c, h.pool, group.TeacherID, group.ID) {
+			continue
+		}
 		result = append(result, groupResponse(group, group.TeacherID == userID.(int32)))
 	}
 	c.JSON(http.StatusOK, result)
@@ -188,6 +197,15 @@ func (h *GroupHandler) AddStudent(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	var permitted bool
+	if err := h.pool.QueryRow(c.Request.Context(), `SELECT qa_resource_access($1,$2,$3)`, req.UserID, group.TeacherID, groupID).Scan(&permitted); err != nil {
+		c.JSON(500, gin.H{"error": "internal error"})
+		return
+	}
+	if !permitted {
+		c.JSON(403, gin.H{"error": "school membership required"})
+		return
+	}
 	entry, err := h.q.AddStudentToGroup(ctx, db.AddStudentToGroupParams{
 		UserID:  req.UserID,
 		GroupID: groupID,
@@ -256,6 +274,10 @@ func (h *GroupHandler) JoinGroup(c *gin.Context) {
 	}
 	if count >= 2 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Можно состоять максимум в 2 группах"})
+		return
+	}
+	if !qaAccess(c, h.pool, group.TeacherID, group.ID) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
 		return
 	}
 

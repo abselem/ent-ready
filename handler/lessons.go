@@ -213,7 +213,7 @@ func (h *LessonHandler) ListMine(c *gin.Context) {
 		LEFT JOIN groups g ON g.id = l.group_id
 		LEFT JOIN topics t ON t.id = l.topic_id
 		LEFT JOIN subtopics st ON st.id = l.subtopic_id
-		WHERE l.created_by = $1
+		WHERE l.created_by = $1 AND qa_resource_access($1,l.created_by,l.group_id)
 		ORDER BY l.created_at DESC
 	`, userID.(int32))
 	if err != nil {
@@ -522,6 +522,9 @@ func (h *LessonHandler) Publish(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 	if req.Visibility == "" {
 		req.Visibility = "all"
+		if _, qa := qaWorkspaceFor(c); qa {
+			req.Visibility = "private"
+		}
 	}
 	if !validLessonVisibility(req.Visibility) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid visibility"})
@@ -662,11 +665,15 @@ func (h *LessonHandler) GrantAccess(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid access grant"})
 		return
 	}
-	h.pool.Exec(ctx, `
+	_, grantErr := h.pool.Exec(ctx, `
 		INSERT INTO lesson_access (lesson_id, type, ref_id)
 		VALUES ($1, $2, $3)
 		ON CONFLICT DO NOTHING
 	`, id, req.Type, req.RefID)
+	if grantErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "access grant is not permitted"})
+		return
+	}
 	c.Status(http.StatusNoContent)
 }
 

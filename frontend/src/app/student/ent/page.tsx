@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
+import { useQaSchool } from "@/lib/qa-school";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
 import { Button } from "@/components/ui/button";
@@ -26,6 +27,7 @@ function formatDate(value: string) {
 }
 
 export default function ENTPage() {
+  const { data: qaSchool } = useQaSchool();
   const router = useRouter();
   const { user } = useAuthStore();
   const hasSubjects = !!(user?.profile_subject1 && user?.profile_subject2);
@@ -51,6 +53,7 @@ export default function ENTPage() {
     { name: subjectName(user?.profile_subject2, "Второй профильный предмет"), detail: user?.profile_subject2 ? "Выбран в профиле" : "Выберите в профиле" },
   ];
 
+  if (qaSchool?.is_qa) return <div className="page-shell space-y-4 p-4 md:p-8"><h1 className="text-2xl font-semibold">Тесты QA-школы</h1><p className="text-muted-foreground">В тестовой школе используйте назначенные предметные тесты. Общая генерация ЕНТ для QA-аккаунтов отключена.</p><Link className="inline-flex min-h-11 items-center text-primary underline" href="/student">Открыть тесты школы</Link></div>;
   return (
     <div className="mx-auto max-w-4xl space-y-8 p-4 md:p-8">
       <header className="space-y-2">

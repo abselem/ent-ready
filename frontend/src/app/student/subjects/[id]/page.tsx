@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter, useParams } from "next/navigation";
+import { useQaSchool } from "@/lib/qa-school";
 import { api } from "@/lib/api";
 import { PageHeader } from "@/components/ui/page-header";
 import { AsyncState } from "@/components/ui/async-state";
@@ -14,6 +15,7 @@ interface Subtopic { id: number; name: string; topic_id: number }
 interface TestWithAuthor { id: number; title: string; description: string; max_attempts: number; time_limit: number | null; author_name: string }
 
 export default function SubjectPage() {
+  const { data: qaSchool } = useQaSchool();
   const router = useRouter();
   const params = useParams();
   const topicId = Number(params.id);
@@ -47,8 +49,9 @@ export default function SubjectPage() {
       <section aria-labelledby="random-test-title" className="surface p-5 md:p-6">
         <div className="flex flex-wrap items-start justify-between gap-5">
           <div className="max-w-xl"><span className="mb-3 inline-flex rounded-lg bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">Самостоятельная практика</span><h2 id="random-test-title" className="text-xl font-semibold">Случайный тест</h2><p className="mt-2 text-sm leading-relaxed text-muted-foreground">Вопросы по этому предмету подбираются из доступного банка. Состав зависит от наличия вопросов.</p></div>
-          <Button onClick={handleRandomTest} loading={loadingRandom} disabled={loadingRandom} aria-busy={loadingRandom}>{loadingRandom ? "Создаём тренировку…" : "Создать тренировку"}</Button>
+          <Button onClick={handleRandomTest} loading={loadingRandom} disabled={loadingRandom || qaSchool?.is_qa} aria-busy={loadingRandom}>{loadingRandom ? "Создаём тренировку…" : "Создать тренировку"}</Button>
         </div>
+        {qaSchool?.is_qa && <p className="mt-3 text-sm text-muted-foreground">Общая генерация отключена для QA-аккаунтов. Используйте назначенные тесты школы.</p>}
         {randomError && <p role="alert" className="mt-4 rounded-xl border border-destructive/30 bg-destructive-surface p-3 text-sm text-destructive">{randomError}</p>}
       </section>
       {subtopicsQuery.isPending && <p role="status" className="text-sm text-muted-foreground">Загружаем темы предмета…</p>}

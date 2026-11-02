@@ -2,6 +2,7 @@
 
 import React, { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQaSchool } from "@/lib/qa-school";
 import { api, apiOrigin } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { MathText } from "@/components/math-text";
@@ -781,6 +782,7 @@ const DEFAULT_PAIRS: MatchPair[] = [
 ];
 
 export default function QuestionBankPage() {
+  const { data: qaSchool } = useQaSchool();
   const qc = useQueryClient();
   const [importMode, setImportMode] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -856,7 +858,7 @@ export default function QuestionBankPage() {
 
   const createQuestion = useMutation({
     mutationFn: () => api.post("/questions", {
-      allow_generation: allowGeneration,
+      allow_generation: qaSchool?.is_qa ? false : allowGeneration,
       text, difficulty, question_type: qtype,
       topic_id: topicId || null, subtopic_id: subtopicId || null,
       explanation: explanation || null,
@@ -889,7 +891,7 @@ export default function QuestionBankPage() {
 
   const updateQuestion = useMutation({
     mutationFn: (id: number) => api.put(`/questions/${id}`, {
-      allow_generation: allowGeneration,
+      allow_generation: qaSchool?.is_qa ? false : allowGeneration,
       text, difficulty, question_type: qtype,
       topic_id: topicId || null, subtopic_id: subtopicId || null,
       explanation: explanation || null,
@@ -1054,9 +1056,9 @@ export default function QuestionBankPage() {
                 </div>
 
                 <label className="flex items-start gap-2 text-sm">
-                  <input type="checkbox" checked={allowGeneration}
+                  <input type="checkbox" checked={qaSchool?.is_qa ? false : allowGeneration} disabled={qaSchool?.is_qa}
                     onChange={e => setAllowGeneration(e.target.checked)} className="mt-1" />
-                  <span>Разрешить использовать вопрос в общих тренировках и ЕНТ.
+                  <span>{qaSchool?.is_qa ? "Вопросы QA-школы не используются в общих тренировках и ЕНТ." : "Разрешить использовать вопрос в общих тренировках и ЕНТ."}
                     <span className="block text-xs text-muted-foreground">Учащиеся смогут получить этот вопрос и увидеть ответ при разборе тренировки.</span>
                   </span>
                 </label>

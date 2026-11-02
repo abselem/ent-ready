@@ -9,7 +9,7 @@ import (
 // Generated tests are personal even if flags are accidentally changed later.
 func (h *TestHandler) canReadTest(ctx context.Context, test db.Test, userID int32) bool {
 	var allowed bool
-	err := h.pool.QueryRow(ctx, `SELECT CASE WHEN generated_for IS NOT NULL THEN generated_for=$2 ELSE COALESCE(created_by=$2,FALSE) OR (is_published AND (is_public OR EXISTS(SELECT 1 FROM user_groups ug WHERE ug.group_id=tests.group_id AND ug.user_id=$2))) END FROM tests WHERE id=$1`, test.ID, userID).Scan(&allowed)
+	err := h.pool.QueryRow(ctx, `SELECT qa_resource_access($2,created_by,group_id) AND CASE WHEN generated_for IS NOT NULL THEN generated_for=$2 ELSE COALESCE(created_by=$2,FALSE) OR (is_published AND (is_public OR EXISTS(SELECT 1 FROM user_groups ug WHERE ug.group_id=tests.group_id AND ug.user_id=$2))) END FROM tests WHERE id=$1`, test.ID, userID).Scan(&allowed)
 	return err == nil && allowed
 }
 func attemptExpired(test db.Test, attempt db.TestAttempt, now time.Time) bool {

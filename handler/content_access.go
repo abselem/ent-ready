@@ -15,7 +15,7 @@ func requireGroupRead(c *gin.Context, pool *pgxpool.Pool, id int32, ownerOnly bo
 	var allowed bool
 	uid, _ := c.Get("user_id")
 	err := pool.QueryRow(c.Request.Context(), `SELECT EXISTS(SELECT 1 FROM groups g WHERE g.id=$1 AND
- (g.teacher_id=$2 OR (NOT $3 AND EXISTS(SELECT 1 FROM user_groups ug WHERE ug.group_id=g.id AND ug.user_id=$2))))`, id, uid.(int32), ownerOnly).Scan(&allowed)
+ qa_resource_access($2,g.teacher_id,g.id) AND (g.teacher_id=$2 OR (NOT $3 AND EXISTS(SELECT 1 FROM user_groups ug WHERE ug.group_id=g.id AND ug.user_id=$2))))`, id, uid.(int32), ownerOnly).Scan(&allowed)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return false
@@ -29,7 +29,7 @@ func requireGroupRead(c *gin.Context, pool *pgxpool.Pool, id int32, ownerOnly bo
 
 // The same predicate is used for both listing and direct reads. Group membership
 // is an independent grant, matching the existing catalogue semantics.
-const lessonReadPredicate = `(l.created_by=$1 OR (l.is_published AND (
+const lessonReadPredicate = `qa_resource_access($1,l.created_by,l.group_id) AND (l.created_by=$1 OR (l.is_published AND (
  l.visibility='all'
  OR EXISTS(SELECT 1 FROM user_groups ug WHERE ug.user_id=$1 AND ug.group_id=l.group_id)
  OR (l.visibility IN ('school','course') AND EXISTS(SELECT 1 FROM user_groups ug JOIN groups g ON g.id=ug.group_id WHERE ug.user_id=$1 AND g.category=l.visibility AND g.teacher_id=l.created_by))

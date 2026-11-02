@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { useQaSchool } from "@/lib/qa-school";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -22,6 +23,7 @@ interface Test {
 }
 
 export default function TeacherTestsPage() {
+  const { data: qaSchool } = useQaSchool();
   const statusRef = useRef<HTMLParagraphElement>(null);
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
@@ -68,11 +70,11 @@ export default function TeacherTestsPage() {
     setError("");
     createTest.mutate({
       title,
-      group_id: groupId ? Number(groupId) : null,
+      group_id: groupId ? Number(groupId) : qaSchool?.is_qa ? qaSchool.group_id : null,
       topic_id: topicId ? Number(topicId) : null,
       max_attempts: Number(maxAttempts),
       time_limit: timeLimit ? Number(timeLimit) : null,
-      is_public: isPublic,
+      is_public: qaSchool?.is_qa ? false : isPublic,
       deadline: deadline ? new Date(deadline).toISOString() : null,
     });
   }
@@ -126,7 +128,7 @@ export default function TeacherTestsPage() {
                 </label>
                 <select id="group" disabled={groupsLoading || groupsError} value={groupId} onChange={(e) => { setGroupId(e.target.value); if (!e.target.value) setDeadline(""); }}
                   className="min-h-11 border border-control-border rounded-xl px-3 py-2 text-sm text-foreground bg-card focus:outline-none focus:ring-2 focus:ring-primary">
-                  <option value="">{groupsLoading ? "Загружаем группы…" : "Без группы"}</option>
+                  <option value="">{groupsLoading ? "Загружаем группы…" : qaSchool?.is_qa ? "QA-группа по умолчанию" : "Без группы"}</option>
                   {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
                 </select>
               </div>
@@ -146,7 +148,7 @@ export default function TeacherTestsPage() {
 
               {groupsError && <div role="alert" className="text-sm text-destructive">Не удалось загрузить группы. <button type="button" className="min-h-11 underline" onClick={() => refetchGroups()}>Повторить</button></div>}
               {topicsError && <div role="alert" className="text-sm text-destructive">Не удалось загрузить предметы. <button type="button" className="min-h-11 underline" onClick={() => refetchTopics()}>Повторить</button></div>}
-              <fieldset className="flex flex-col gap-1.5">
+              {qaSchool?.is_qa ? <p className="text-sm text-muted-foreground">Доступ только в QA-школе. Публикация в общем каталоге отключена.</p> : <fieldset className="flex flex-col gap-1.5">
                 <legend className="mb-2 text-sm font-medium text-foreground">Публичный доступ</legend>
                 <div className="flex rounded-lg border border-border overflow-hidden">
                   <button type="button" aria-pressed={!isPublic} onClick={() => setIsPublic(false)}
@@ -161,7 +163,7 @@ export default function TeacherTestsPage() {
                 <p className="text-xs text-muted-foreground">
                   {isPublic ? "После публикации тест будет доступен всем ученикам." : "Публичный доступ выключен. Доступ учеников зависит от назначения группе и публикации."}
                 </p>
-              </fieldset>
+              </fieldset>}
 
               <Input id="maxAttempts" label="Макс. попыток" type="number" min="1" max="10"
                 value={maxAttempts} onChange={(e) => setMaxAttempts(e.target.value)} />
