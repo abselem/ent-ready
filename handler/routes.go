@@ -67,6 +67,8 @@ func NewRouter(pool *pgxpool.Pool, cfg *config.Config, n notify.Sender) *gin.Eng
 		secure.GET("/organizations/:id", organizations.Get)
 		secure.PATCH("/organizations/:id", organizations.Update)
 		secure.GET("/organizations/:id/members", organizations.Members)
+		secure.GET("/organizations/:id/transfers/candidates", organizations.TransferCandidates)
+		secure.POST("/organizations/:id/transfers/preflight", organizations.TransferPreflight)
 
 		// Профиль
 		secure.GET("/users/me", users.GetMe)

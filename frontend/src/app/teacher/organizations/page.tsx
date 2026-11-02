@@ -11,6 +11,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { TransferPreflightCard } from "./transfer-preflight";
 
 const roleLabel: Record<OrganizationRole, string> = { owner: "Владелец", admin: "Администратор", teacher: "Преподаватель", student: "Ученик", parent: "Родитель" };
 const gradingLabel = { points: "Баллы", "5": "5-балльная", "10": "10-балльная", "100": "100-балльная" };
@@ -126,6 +127,7 @@ function OrganizationEditor({ organization, scope, onDirtyChange }: { organizati
         {editable && <Button type="submit" loading={save.isPending} disabled={!dirty}>Сохранить настройки</Button>}
       </form>
     </Card>
+    {editable && <TransferPreflightCard organization={organization} scope={scope} />}
     {editable && <Card>
       <h3 className="mb-4 text-lg font-semibold">Участники</h3>
       {members.isPending ? <AsyncState kind="loading" title="Загружаем участников…" /> : members.isError ?
